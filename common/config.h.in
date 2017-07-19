@@ -1,0 +1,12 @@
+#pragma once
+
+namespace CompileOptions {
+static const auto LLMC_VERSION_MAJOR = @llmc_VERSION_MAJOR@;
+static const auto LLMC_VERSION_MINOR = @llmc_VERSION_MINOR@;
+static const auto LLMC_VERSION_PATCH = @llmc_VERSION_PATCH@;
+static const auto CMAKE_INSTALL_PREFIX = "@CMAKE_INSTALL_PREFIX@";
+static const auto CMAKE_CXX_FLAGS = "@CMAKE_CXX_FLAGS@";
+static const auto LLVM_PACKAGE_VERSION = "@LLVM_PACKAGE_VERSION@";
+}
+
+#define HAVE_PINS_H @HAVE_PINS_H@
