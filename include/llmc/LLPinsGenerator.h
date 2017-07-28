@@ -1636,6 +1636,8 @@ private:
 
     ProcessStack stack;
 
+    std::unordered_map<std::string, Function*> hookedFunctions;
+
 public:
     LLPinsGenerator(std::unique_ptr<llvm::Module> modul, std::ostream& out)
         : up_module(std::move(modul))
@@ -2616,6 +2618,40 @@ public:
         return v;
     }
 
+    Value* vMap(Value* registers, Value* OI) {
+        // Leave constants as they are
+        if(dyn_cast<Constant>(OI)) {
+            return OI;
+
+        // If we have a known mapping, perform the mapping
+        } else if(valueRegisterIndex.count(OI) > 0) {
+            return builder.CreateLoad(vReg(registers, OI));
+
+        // Otherwise, report an error
+        } else {
+            roout << "Could not find mapping for " << *OI << "\n";
+            roout.flush();
+            return OI;
+        }
+    }
+
+    /**
+     * @brief Change all the registers used in the instruction to the mapped
+     * registers using the vreg() mapping and loading the value from the
+     * state-vector.
+     * @param IC The instruction of which the operands are to be mapped
+     */
+    void vMapOperands(GenerationContext* gctx, Instruction* IC) {
+
+        Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+
+        //  This is because the registers are in the state-vector
+        // and thus in-memory, thus they need to be loaded.
+        for (auto& OI: IC->operands()) {
+            OI = vMap(registers, OI);
+        }
+    }
+
     /**
      * @brief Generates the next-state relation for the Instruction @c I
      * This should be done duing generation, as the instruction is inserted
@@ -2627,27 +2663,12 @@ public:
 
         // Clone the instruction
         Instruction* IC = I->clone();
-        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
 
         // Change all the registers used in the instruction to the mapped
         // registers using the vreg() mapping and loading the value from the
         // state-vector. This is because the registers are in the state-vector
         // and thus in-memory, thus they need to be loaded.
-        for (auto& OI: IC->operands()) {
-
-            // Leave constants as they are
-            if(dyn_cast<Constant>(OI)) continue;
-
-            // If we have a known mapping, perform the mapping
-            if(valueRegisterIndex.count(OI) > 0) {
-                OI = builder.CreateLoad(vReg(registers, &OI));
-
-            // Otherwise, report an error
-            } else {
-                roout << "Could not find mapping for " << *OI << "\n";
-                roout.flush();
-            }
-        }
+        vMapOperands(gctx, IC);
 
         // Insert the instruction
         builder.Insert(IC);
@@ -2655,6 +2676,7 @@ public:
         // If the instruction has a return value, store the result in the SV
         if(IC->getType() != t_void) {
             assert(valueRegisterIndex[I]);
+            auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
             builder.CreateStore(IC, vReg(registers, I));
         }
     }
@@ -2696,6 +2718,7 @@ public:
             case Instruction::Ret:
                 return generateNextStateForInstruction(gctx, dyn_cast<ReturnInst>(I));
             case Instruction::Br:
+                return generateNextStateForInstruction(gctx, dyn_cast<BranchInst>(I));
             case Instruction::Switch:
             case Instruction::IndirectBr:
             case Instruction::Invoke:
@@ -2897,20 +2920,79 @@ public:
 
         // If this is a declaration, there is no body within the LLVM model,
         // thus we need to handle it differently.
-        if(I->getCalledFunction()->isDeclaration()) {
+        Function* F = I->getCalledFunction();
+        if(F->isDeclaration()) {
+
+            auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+            auto it = gctx->gen->hookedFunctions.find(F->getName());
+
+            // If this is a hooked function
+            if(it != gctx->gen->hookedFunctions.end()) {
+
+                // Map the operands
+                std::vector<Value*> args;
+                for(unsigned int i = 0; i < I->getNumArgOperands(); ++i) {
+                    auto Arg = I->getArgOperand(i);
+
+                    // Leave constants as they are
+                    if(dyn_cast<Constant>(Arg)) {
+                        args.push_back(Arg);
+
+                    // If we have a known mapping, perform the mapping
+                    } else if(valueRegisterIndex.count(Arg) > 0) {
+                        Arg = builder.CreateLoad(vReg(registers, Arg));
+
+                    // Otherwise, report an error
+                    } else {
+                        roout << "Could not find mapping for " << *Arg << "\n";
+                        roout.flush();
+                    }
+                }
+
+                gctx->gen->builder.CreateCall(it->second, {});
+            }
 
         // Otherwise, there is an LLVM body available, so it is modeled.
         } else {
-            stack.pushStackFrame(gctx, *I->getCalledFunction());
+            stack.pushStackFrame(gctx, *F);
             gctx->alteredPC = true;
         }
     }
 
-    void generateNextStateForBranch() {
+    void generateNextStateForInstruction(GenerationContext* gctx, BranchInst* I) {
+        auto dst_pc = lts["processes"][0]["pc"].getValue(gctx->svout);
+        if(I->isConditional()) {
+            Value* condition = I->getCondition();
+            assert(condition);
+            if(I->getNumSuccessors() == 2) {
+
+                // Set the program counter to the start of the pushed function
+                auto locTrue = gctx->gen->programLocations[&*I->getSuccessor(0)->begin()];
+                auto locFalse = gctx->gen->programLocations[&*I->getSuccessor(1)->begin()];
+                assert(locTrue);
+                assert(locFalse);
+                Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+                Value* newLoc = builder.CreateSelect( vMap(registers, condition)
+                                                    , ConstantInt::get(gctx->gen->t_int, locTrue)
+                                                    , ConstantInt::get(gctx->gen->t_int, locFalse)
+                                                    );
+                gctx->gen->builder.CreateStore(newLoc, dst_pc);
+            } else {
+                roout << "Conditional Branch has more or less than 2 successors: " << *I << "\n";
+                roout.flush();
+            }
+        } else {
+            if(I->getNumSuccessors() == 1) {
+                auto loc = gctx->gen->programLocations[&*I->getSuccessor(0)->begin()];
+                assert(loc);
+                gctx->gen->builder.CreateStore(ConstantInt::get(gctx->gen->t_int, loc), dst_pc);
+            } else {
+                roout << "Unconditional branch has more or less than 1 successor: " << *I << "\n";
+                roout.flush();
+            }
+        }
     }
 
-    void generateNextStateForReturn() {
-    }
 
     /**
      * @brief generates the pop interface to LTSmin
