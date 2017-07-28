@@ -1977,6 +1977,8 @@ public:
             // Create entry block with a number of stack allocations
             BasicBlock* entry = BasicBlock::Create(ctx, "entry" , f_pins_getnext);
             builder.SetInsertPoint(entry);
+
+            // FIXME: should not be 'global'
             transition_info = builder.CreateAlloca(pins_type("transition_info_t"));
             auto edgeLabelValue = builder.CreateAlloca(t_edgeLabels);
             auto svout = builder.CreateAlloca(t_statevector);
@@ -2008,6 +2010,11 @@ public:
                                 , ConstantInt::get(t_int8, 0)
                                 , transition_info_size
                                 , transition_info->getPointerAlignment(pinsModule->getDataLayout())
+                                );
+            builder.CreateMemSet( edgeLabelValue
+                                , ConstantInt::get(t_int8, 0)
+                                , generateSizeOf(t_edgeLabels)
+                                , edgeLabelValue->getPointerAlignment(pinsModule->getDataLayout())
                                 );
 
             // Basic block for when the specified group ID is invalid
@@ -3242,6 +3249,10 @@ public:
                 continue;
             }
 
+            // Get the size of the variable
+            Constant* varsize = node->getSizeValueInSlots();
+            ConstantInt* varsize_int = dyn_cast<ConstantInt>(varsize);
+
             // Create BasicBlocks
             BasicBlock* forcond = for_end;
             BasicBlock* forbody = BasicBlock::Create(ctx, "for_body_" + node->getName(), F);
@@ -3250,7 +3261,6 @@ public:
 
             // Create the condition
             PHINode* tg = builder.CreatePHI(t_int, 2, "TG");
-            Value* varsize = node->getSizeValueInSlots();
             Value* cond = builder.CreateICmpULT(tg, varsize);
             builder.CreateCondBr(cond, forbody, for_end);
 
@@ -3258,11 +3268,14 @@ public:
             builder.SetInsertPoint(forbody);
             Value* slotv = builder.CreateLoad(t_int, slot);
 
-            // The name will have a counter, counting the number of slots
-            // from the start of the variable in the state-vector
+            // If the variable needs multiple slots, the name will have a
+            // counter, counting the number of slots from the start of the
+            // variable in the state-vector
             IRStringBuilder irs(*this, 256);
             irs << node->getName();
-            irs << tg;
+            if(varsize_int && varsize_int->getZExtValue() > 0) {
+                irs << tg;
+            }
             auto name = irs.str();
 
             builder.CreateCall( pins("printf")
@@ -3294,7 +3307,7 @@ public:
             // Branch to the branch that increments the tg index
             builder.CreateBr(forincr);
 
-            // Incremebt the tg index and branch to the condition
+            // Increment the tg index and branch to the condition
             builder.SetInsertPoint(forincr);
             Value* nextTG = builder.CreateAdd(tg, ConstantInt::get(t_int, 1));
             builder.CreateBr(forcond);
