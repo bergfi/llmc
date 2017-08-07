@@ -11,6 +11,7 @@
 #include <llvm/Bitcode/BitcodeReader.h>
 #endif
 
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/ExecutionEngine/Interpreter.h>

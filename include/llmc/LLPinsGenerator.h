@@ -1,7 +1,5 @@
 #pragma once
 
-#include "config.h"
-
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -12,6 +10,7 @@
 #include <stack>
 #include <sys/mman.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <llmc/llvmincludes.h>
@@ -2071,6 +2070,11 @@ public:
             valueRegisterIndex[V] = nextID++;
         };
 
+        // Globals
+        for(auto& v: module->getGlobalList()) {
+            valueRegisterIndex[&v] = nextID++;
+        }
+
         // Store the register layout of all the functions in the program,
         // such that we can map registers to a location in the SV
         for(auto& F: *module) {
@@ -2114,11 +2118,6 @@ public:
      */
     void generateTypes() {
         assert(t_statevector == nullptr);
-
-        std::vector<Type*> globals;
-        for(auto& t: module->getGlobalList()) {
-            globals.push_back(t.getType());
-        }
 
         // Basic types
         t_int = IntegerType::get(ctx, BITWIDTH_STATEVAR);
@@ -2215,10 +2214,17 @@ public:
         auto sv_globals = new SVTree("globals", "globals");
         for(auto& t: module->getGlobalList()) {
 
+            // Determine the type of the global
+            PointerType* pt = dyn_cast<PointerType>(t.getType());
+            assert(pt && "global is not pointer... constant?");
+            auto gt = pt->getElementType();
+
+            // Add the global
             auto type_global = new SVType( "global_" + t.getName().str()
-                                     , LTStypeSInt32
-                                     , t.getType()
-                                     );
+                                         , LTStypeSInt32
+                                         , gt
+                                         );
+            lts << type_global;
             *sv_globals << new SVTree(t.getName(), type_global);
         }
 
@@ -2596,8 +2602,7 @@ public:
             Function& F = *v->getParent();
             return vReg(registers, F, "Arg" + reg->getName().str(), v);
         }
-        //reg->dump();
-        assert(0 && "Value not an instruction!");
+        assert(0 && "Value not an instruction or argument!");
         return nullptr;
     }
 
@@ -2625,13 +2630,25 @@ public:
         return v;
     }
 
-    Value* vMap(Value* registers, Value* OI) {
+    Value* vMap(GenerationContext* gctx, Value* OI) {
+
         // Leave constants as they are
-        if(dyn_cast<Constant>(OI)) {
+        if(auto v = dyn_cast<GlobalVariable>(OI)) {
+            auto idx = valueRegisterIndex[OI];
+            Value* globals = lts["globals"].getValue(gctx->svout);
+            return builder.CreateGEP( globals
+                                    , { ConstantInt::get(t_int, 0)
+                                      , ConstantInt::get(t_int, idx)
+                                      }
+                                    , "global_" + OI->getName()
+                                    );
+            return globals;
+        } else if(dyn_cast<Constant>(OI)) {
             return OI;
 
         // If we have a known mapping, perform the mapping
         } else if(valueRegisterIndex.count(OI) > 0) {
+            Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
             return builder.CreateLoad(vReg(registers, OI));
 
         // Otherwise, report an error
@@ -2650,12 +2667,10 @@ public:
      */
     void vMapOperands(GenerationContext* gctx, Instruction* IC) {
 
-        Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-
-        //  This is because the registers are in the state-vector
+        // This is because the registers are in the state-vector
         // and thus in-memory, thus they need to be loaded.
         for (auto& OI: IC->operands()) {
-            OI = vMap(registers, OI);
+            OI = vMap(gctx, OI);
         }
     }
 
@@ -2672,7 +2687,7 @@ public:
         Instruction* IC = I->clone();
 
         // Change all the registers used in the instruction to the mapped
-        // registers using the vreg() mapping and loading the value from the
+        // registers using the vMap() mapping and loading the value from the
         // state-vector. This is because the registers are in the state-vector
         // and thus in-memory, thus they need to be loaded.
         vMapOperands(gctx, IC);
@@ -2698,7 +2713,7 @@ public:
     void generateNextStateForInstruction(GenerationContext* gctx, Instruction* I) {
 
         // Debug
-        roout << "Handling instruction " << *I << "\n";
+        roout << "Handling instruction " << *I << "\n"; roout.flush();
         std::string str;
         raw_string_ostream strout(str);
         if(valueRegisterIndex.count(I)) {
@@ -2849,49 +2864,30 @@ public:
         // Value-map all the operands of the instruction
         for (auto& OI: IC->operands()) {
 
-            // Leave constants
-            if(dyn_cast<Constant>(OI)) continue;
+            // If this is the pointer operand to a global, a different mapping
+            // needs be performed
+            if(dyn_cast<Value>(OI.get()) == ptr && !dyn_cast<GlobalVariable>(ptr)) {
 
-            // If there is a mapping
-            if(valueRegisterIndex.count(OI) > 0) {
+                // Load the model-register to obtain the pointer to memory
+                OI = builder.CreateLoad(vReg(registers, OI.get()));
 
-                // If this is the pointer operand, a different mapping needs
-                // be performed
-                if(dyn_cast<Value>(&OI) == ptr) {
+                // Since the pointer is an offset within the heap, add
+                // the start address of the loaded memory chunk to the
+                // offset to obtain the current real address. Current
+                // means within the scope of this next-state call.
+                OI = builder.CreatePtrToInt(OI, t_intptr);
+                OI = builder.CreateAdd(OI, builder.CreatePtrToInt(sv_memorydata, t_intptr));
+                OI = builder.CreateIntToPtr(OI, I->getPointerOperand()->getType());
 
-                    // Load the model-register to obtain the pointer to memory
-                    OI = builder.CreateLoad(vReg(registers, OI));
+                // Debug
+                // FIXME: add out-of-bounds check
+                builder.CreateCall(pins("printf"), {generateGlobalString("access @ %x\n"), OI});
 
-                    // If the pointer operand is a global
-                    if(dyn_cast<GlobalValue>(ptr)) {
-                        assert(0 && "loading globals not supported");
-
-                    // Otherwise, the pointer operand points to in the heap
-                    } else {
-
-                        // Since the pointer is an offset within the heap, add
-                        // the start address of the loaded memory chunk to the
-                        // offset to obtain the current real address. Current
-                        // means within the scope of this next-state call.
-                        OI = builder.CreatePtrToInt(OI, t_intptr);
-                        OI = builder.CreateAdd(OI, builder.CreatePtrToInt(sv_memorydata, t_intptr));
-                        OI = builder.CreateIntToPtr(OI, I->getPointerOperand()->getType());
-
-                        // Debug
-                        // FIXME: add out-of-bounds check
-                        builder.CreateCall(pins("printf"), {generateGlobalString("access @ %x\n"), OI});
-                    }
-
-                // If this is a 'normal' register, simply obtain the value
-                } else {
-                    OI = builder.CreateLoad(vReg(registers, OI));
-                }
-
-            // Otherwise, report an error
+            // If this is a 'normal' register, simply map it
             } else {
-                roout << "Could not find mapping for " << *OI << "\n";
-                roout.flush();
+                OI = vMap(gctx, OI);
             }
+
         }
 
         // Insert the cloned instruction
@@ -2968,18 +2964,24 @@ public:
 
     void generateNextStateForInstruction(GenerationContext* gctx, BranchInst* I) {
         auto dst_pc = lts["processes"][0]["pc"].getValue(gctx->svout);
+
+        // If this branch instruction has a condition
         if(I->isConditional()) {
+
             Value* condition = I->getCondition();
             assert(condition);
             if(I->getNumSuccessors() == 2) {
 
-                // Set the program counter to the start of the pushed function
+                // Set the program counter to either the true basic block or
+                // the false basic block. This is done by a Select instruction,
+                // which does basically:
+                //   loc = cond ? locTrue : locFalse;
+                // at run-time.
                 auto locTrue = gctx->gen->programLocations[&*I->getSuccessor(0)->begin()];
                 auto locFalse = gctx->gen->programLocations[&*I->getSuccessor(1)->begin()];
                 assert(locTrue);
                 assert(locFalse);
-                Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-                Value* newLoc = builder.CreateSelect( vMap(registers, condition)
+                Value* newLoc = builder.CreateSelect( vMap(gctx, condition)
                                                     , ConstantInt::get(gctx->gen->t_int, locTrue)
                                                     , ConstantInt::get(gctx->gen->t_int, locFalse)
                                                     );
@@ -3187,6 +3189,16 @@ public:
                 // Make sure the empty stack is at chunkID 0
                 ChunkMapper cm_stack(*this, model, type_stack);
                 cm_stack.generatePutAt(ConstantInt::get(t_int, 0), ConstantPointerNull::get(t_intp), 0);
+
+                // Set the initialization value for the globals
+                for(auto& v: module->getGlobalList()) {
+                    if(v.hasInitializer()) {
+                        int idx = valueRegisterIndex[&v];
+                        auto& node = lts["globals"][idx];
+                        assert(node.getChildren().size() == 0);
+                        builder.CreateStore(v.getInitializer(), node.getValue(s_statevector));
+                    }
+                }
             }
 
             // Set the initial state
