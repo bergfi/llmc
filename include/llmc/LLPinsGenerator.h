@@ -3285,10 +3285,13 @@ public:
             // variable in the state-vector
             IRStringBuilder irs(*this, 256);
             irs << node->getName();
-            if(varsize_int && varsize_int->getZExtValue() > 0) {
-                irs << tg;
-            }
+            irs << tg;
             auto name = irs.str();
+
+            name = builder.CreateSelect( builder.CreateICmpEQ(varsize, ConstantInt::get(t_int, 1))
+                                       , generateGlobalString(node->getName())
+                                       , name
+                                       );
 
             builder.CreateCall( pins("printf")
                               , { generateGlobalString("Slot %i (%i/%i): type %i, name %s\n")
