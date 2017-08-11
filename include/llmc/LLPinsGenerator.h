@@ -532,6 +532,24 @@ public:
         std::string const& getName() const {
             return name;
         }
+
+        std::string getFullName() {
+            if(parent) {
+                std::string pname = parent->getFullName();
+                if(name == "") {
+                    std::stringstream ss;
+                    ss << pname << "[" << getIndex() << "]";
+                    return ss.str();
+                } else if(pname == "") {
+                    return name;
+                } else {
+                    return pname + "_" + name;
+                }
+            } else {
+                return "";
+            }
+        }
+
         std::string const& getTypeName() const {
             return name;
         }
@@ -2196,9 +2214,7 @@ public:
         // Processes
         auto sv_processes = new SVTree("processes", "processes");
         for(int i=0; i < MAX_THREADS; ++i) {
-            std::stringstream ss;
-            ss << "p" << i;
-            auto sv_proc = new SVTree(ss.str(), "process");
+            auto sv_proc = new SVTree("", "process");
             *sv_proc
                 << new SVTree("status", type_status)
                 << new SVTree("pc", type_pc)
@@ -3284,12 +3300,12 @@ public:
             // counter, counting the number of slots from the start of the
             // variable in the state-vector
             IRStringBuilder irs(*this, 256);
-            irs << node->getName();
+            irs << node->getFullName();
             irs << tg;
             auto name = irs.str();
 
             name = builder.CreateSelect( builder.CreateICmpEQ(varsize, ConstantInt::get(t_int, 1))
-                                       , generateGlobalString(node->getName())
+                                       , generateGlobalString(node->getFullName())
                                        , name
                                        );
 
