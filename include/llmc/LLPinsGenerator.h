@@ -361,17 +361,56 @@ public:
      */
     class SVType {
     public:
-        SVType(std::string name, data_format_t ltsminType, Type* llvmType)
-        : name(std::move(name))
-        , ltsminType(std::move(ltsminType))
-        , llvmType(llvmType)
+        SVType(std::string name, data_format_t ltsminType, Type* llvmType, LLPinsGenerator* gen)
+        : _name(std::move(name))
+        , _ltsminType(std::move(ltsminType))
+        , _llvmType(llvmType)
         {
+
+            // Determine if the LLVM Type fits perfectly in a number of state
+            // vector slots.
+            auto& DL = gen->pinsModule->getDataLayout();
+            assert(_llvmType->isSized() && "type is not sized");
+            auto bytesNeeded = DL.getTypeSizeInBits(_llvmType) / 8;
+            assert(bytesNeeded > 0 && "size is 0");
+
+            // If it does not, enlarge the type so that it does, but remember
+            // the actual type that this SVType should represent
+            if(bytesNeeded & 0x3) {
+                _PaddedLLVMType = ArrayType::get( IntegerType::get(_llvmType->getContext(), 32)
+                                                , (bytesNeeded + 3) / 4
+                                                );
+            } else {
+                _PaddedLLVMType = _llvmType;
+            }
+        }
+
+        /**
+         * @brief Request the LLVMType of this SVType.
+         * @return The LLVM Type of this SVType
+         */
+        Type* getLLVMType() {
+            return _PaddedLLVMType;
+        }
+
+        /**
+         * @brief Request the real LLVMType of this SVType.
+         * The different with @c getLLVMType() is that in the event the type
+         * does not perfectly fit a number of state slots, the type in the
+         * SV can differ from the real type, because padding is added to
+         * make it fit.
+         * @return The real LLVM Type of this SVType
+         */
+        Type* getRealLLVMType() {
+            return _llvmType;
         }
     public:
-        std::string name;
-        data_format_t ltsminType;
-        Type* llvmType;
+        std::string _name;
+        data_format_t _ltsminType;
         int index;
+    private:
+        Type* _llvmType;
+        Type* _PaddedLLVMType;
     };
 
     /**
@@ -587,11 +626,20 @@ public:
             // Assert we have a parent or our index is 0
             assert(parent || index == 0);
 
+            // Create the GEP
+            auto v = gen()->builder.CreateGEP(rootValue, ArrayRef<Value*>(indices));
 
-
-            //rootValue->dump();
-
-            return gen()->builder.CreateGEP(rootValue, ArrayRef<Value*>(indices), name);
+            // If the real LLVM Type is different from the LLVM Type in the SV,
+            // perform a pointer cast, so that the generated code actually uses
+            // the real LLVM Type it expects instead of the LLVM Type in the SV.
+            // These can differ in the event the type does not fit a number of
+            // slots perfectly, thus padding is required.
+            if(type && type->getLLVMType() != type->getRealLLVMType()) {
+                v = gen()->builder.CreatePointerCast(v, PointerType::get(type->getRealLLVMType(), 0), name);
+            } else {
+                v->setName(name);
+            }
+            return v;
         }
 
         Value* getLoadedValue(Value* rootValue) {
@@ -643,8 +691,8 @@ public:
         }
 
         Type* getLLVMType() {
-            if(type && type->llvmType) {
-                return type->llvmType;
+            if(type && type->getLLVMType()) {
+                return type->getLLVMType();
             } else if(llvmType) {
                 return llvmType;
             } else {
@@ -803,7 +851,7 @@ public:
         void init() {
             int index = 0;
             for(auto& t: gen.lts.getTypes()) {
-                if(t->name == type->name) {
+                if(t->_name == type->_name) {
                     idx = index;
                     break;
                 }
@@ -825,7 +873,7 @@ public:
         , type(type)
         , idx(-1)
         {
-            assert(type->ltsminType == LTStypeChunk);
+            assert(type->_ltsminType == LTStypeChunk);
             init();
         }
 
@@ -848,7 +896,7 @@ public:
             }
             return gen.builder.CreateCall( gen.pins("pins_chunk_get")
                                          , {model, ConstantInt::get(gen.t_int, idx), chunkid}
-                                         , "chunk." + type->name
+                                         , "chunk." + type->_name
                                          );
         }
 
@@ -865,7 +913,7 @@ public:
             assert(chunk->getType() == gen.t_chunk);
             return gen.builder.CreateCall( gen.pins("pins_chunk_put")
                                          , {model, ConstantInt::get(gen.t_int, idx), chunk}
-                                         , "chunkid." + type->name
+                                         , "chunkid." + type->_name
                                          );
         }
 
@@ -881,7 +929,7 @@ public:
             Value* chunk = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), len, {0});
             chunk = gen.builder.CreateInsertValue(chunk, data, {1});
             gen.builder.CreateCall( gen.pins("printf")
-                                  , {gen.generateGlobalString("CHUNK[" + type->name + "] put of %i bytes:")
+                                  , {gen.generateGlobalString("CHUNK[" + type->_name + "] put of %i bytes:")
                                     , len
                                     }
                                   );
@@ -889,7 +937,7 @@ public:
             gen.builder.CreateCall(gen.pins("printf"), {gen.generateGlobalString("\n")});
             return gen.builder.CreateCall( gen.pins("pins_chunk_put")
                                          , {model, ConstantInt::get(gen.t_int, idx), chunk}
-                                         , "chunkid." + type->name
+                                         , "chunkid." + type->_name
                                          );
         }
 
@@ -914,7 +962,7 @@ public:
             Value* chunk = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), len, {0});
             chunk = gen.builder.CreateInsertValue(chunk, data, {1});
             gen.builder.CreateCall( gen.pins("printf")
-                                  , { gen.generateGlobalString("CHUNK[" + type->name + "] put of %i bytes:")
+                                  , { gen.generateGlobalString("CHUNK[" + type->_name + "] put of %i bytes:")
                                     , len
                                     }
                                   );
@@ -948,7 +996,7 @@ public:
                                     , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
                                     );
             gen.builder.CreateCall( gen.pins("printf")
-                                  , {gen.generateGlobalString("CHUNK[" + type->name + "] get of %i bytes:")
+                                  , {gen.generateGlobalString("CHUNK[" + type->_name + "] get of %i bytes:")
                                     , ch_len
                                     }
                                   );
@@ -989,7 +1037,7 @@ public:
                                            , data
                                            , len
                                            }
-                                         , "chunkid." + type->name
+                                         , "chunkid." + type->_name
                                          );
         }
 
@@ -1505,7 +1553,7 @@ public:
             o << "Types: " << std::endl;
             int n = 0;
             for(auto& t: types) {
-                o << "  " << t->index << ": " << t->name << std::endl;
+                o << "  " << t->index << ": " << t->_name << std::endl;
                 n++;
             }
 
@@ -2163,38 +2211,47 @@ public:
         type_status = new SVType( "status"
                                  , LTStypeSInt32
                                  , t_int
+                                 , this
                                  );
         type_pc = new SVType( "pc"
                                  , LTStypeSInt32
                                  , t_int
+                                 , this
                                  );
         type_stack = new SVType( "stack"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
         type_register_frame = new SVType( "rframe"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
         type_registers = new SVType( "register"
                                  , LTStypeSInt32
                                  , t_registers_max
+                                 , this
                                  );
         type_memory = new SVType( "memory"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
         type_memory_info = new SVType( "minfo"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
         type_heap = new SVType( "heap"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
         type_action = new SVType( "action"
                                  , LTStypeChunk
                                  , t_chunkid
+                                 , this
                                  );
 
         // Add the types to the LTS type
@@ -2239,6 +2296,7 @@ public:
             auto type_global = new SVType( "global_" + t.getName().str()
                                          , LTStypeSInt32
                                          , gt
+                                         , this
                                          );
             lts << type_global;
             *sv_globals << new SVTree(t.getName(), type_global);
@@ -3250,10 +3308,15 @@ public:
     void generateLTSTypeCallsForSVTree( Value* ltstype
                                       , std::unordered_map<std::string, Value*>& pinsTypes
                                       , Function* F
-                                      , std::vector<SVTree*>& leavesSV
+                                      , SVTree& root
                                       , std::string typeno_setter
                                       , std::string name_setter
                                       ) {
+
+        std::vector<SVTree*> leavesSV;
+        root.executeLeaves([this, &leavesSV](SVTree* node) {
+            leavesSV.push_back(node);
+        });
 
         // Create a memory location the count the slot index. Start at 0.
         auto slot = addAlloca(t_int, F);
@@ -3314,15 +3377,15 @@ public:
                                 , slotv
                                 , tg
                                 , varsize
-                                , pinsTypes[node->getType()->name]
+                                , pinsTypes[node->getType()->_name]
                                 , name
                                 }
                               );
 
             // Get the LTSmin type index of the leaf
-            auto v_typeno = pinsTypes[node->getType()->name];
+            auto v_typeno = pinsTypes[node->getType()->_name];
             if(!v_typeno) {
-                roout << "Error: type was not added to LTS: " << node->getType()->name << "\n";
+                roout << "Error: type was not added to LTS: " << node->getType()->_name << "\n";
                 roout.flush();
                 exit(-1);
             }
@@ -3354,6 +3417,16 @@ public:
             // so set the insertion point to it
             builder.SetInsertPoint(for_end);
         }
+
+        Value* slotv = builder.CreateLoad(t_int, slot);
+        auto root_size = generateSizeOf(root.getLLVMType());
+        auto root_count = ConstantExpr::getUDiv(root_size, ConstantInt::get(t_int, 4));
+        builder.CreateCall( pins("printf")
+                          , { generateGlobalString("Populated %i / %i slots\n")
+                            , slotv
+                            , root_count
+                            }
+                          );
     }
 
     /**
@@ -3407,40 +3480,14 @@ public:
 
         // Loop over the types in the LTS to make them known to LTSmin
         for(auto& nameType: lts.getTypes()) {
-            auto nameV = generateGlobalString(nameType->name);
-            auto& t = pinsTypes[nameType->name];
+            auto nameV = generateGlobalString(nameType->_name);
+            auto& t = pinsTypes[nameType->_name];
             t = builder.CreateCall(pins("lts_type_add_type"), {ltstype, nameV, ConstantPointerNull::get(p)});
             builder.CreateCall( pins("lts_type_set_format")
-                              , {ltstype, t, ConstantInt::get(t_int, nameType->ltsminType)}
+                              , {ltstype, t, ConstantInt::get(t_int, nameType->_ltsminType)}
                               );
             builder.CreateCall(pins("printf"), {generateGlobalString("Added type %i: %s\n"), t, nameV});
         }
-
-        // Generate the lts_*() calls to set the types for the state vector
-        generateLTSTypeCallsForSVTree( ltstype
-                                     , pinsTypes
-                                     , F
-                                     , leavesSV
-                                     , "lts_type_set_state_typeno"
-                                     , "lts_type_set_state_name"
-                                     );
-
-        // Generate the lts_*() calls to set the types for the edge labels
-        builder.CreateCall( pins("lts_type_set_edge_label_count")
-                          , { ltstype
-                            , ConstantInt::get(t_int, lts.getEdgeLabels().count())
-                            }
-                          );
-        generateLTSTypeCallsForSVTree( ltstype
-                                     , pinsTypes
-                                     , F
-                                     , leavesEdgeLabels
-                                     , "lts_type_set_edge_label_typeno"
-                                     , "lts_type_set_edge_label_name"
-                                     );
-
-        // FIXME: add state label support
-        assert(leavesLabels.size() == 0);
 
         builder.CreateCall( pins("printf")
                           , { generateGlobalString("t_statevector_size = %i\n")
@@ -3452,6 +3499,35 @@ public:
                             , t_statevector_count
                             }
                           );
+
+        // Generate the lts_*() calls to set the types for the state vector
+        generateLTSTypeCallsForSVTree( ltstype
+                                     , pinsTypes
+                                     , F
+                                     , lts.getSV()
+                                     , "lts_type_set_state_typeno"
+                                     , "lts_type_set_state_name"
+                                     );
+
+        // Generate the lts_*() calls to set the types for the edge labels
+        builder.CreateCall( pins("lts_type_set_edge_label_count")
+                          , { ltstype
+                            , ConstantInt::get(t_int, lts.getEdgeLabels().count())
+                            }
+                          );
+        if(lts.hasEdgeLabels()) {
+            generateLTSTypeCallsForSVTree( ltstype
+                                         , pinsTypes
+                                         , F
+                                         , lts.getEdgeLabels()
+                                         , "lts_type_set_edge_label_typeno"
+                                         , "lts_type_set_edge_label_name"
+                                         );
+        }
+
+        // FIXME: add state label support
+        assert(leavesLabels.size() == 0);
+
         return ltstype;
     }
 
