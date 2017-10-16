@@ -1165,7 +1165,7 @@ public:
          * @param F The function
          * @param setupCall
          */
-        void pushStackFrame(GenerationContext* gctx, Function& F, bool setupCall = false) {
+        void pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, bool setupCall = false) {
             auto& gen = *gctx->gen;
             auto& builder = gen.builder;
 
@@ -1174,7 +1174,7 @@ public:
             auto dst_pc = gen.lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
             auto dst_reg = gen.lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
 
-            // Save the state of the registers
+            // Save the state of the registers and setup parameters
             if(!setupCall) {
                 // Create new register frame chunk
                 ChunkMapper cm_rframe(gen, gctx->model, gen.type_register_frame);
@@ -1197,6 +1197,35 @@ public:
                                                                       , frame
                                                                       );
                 gen.builder.CreateStore(newStackChunkID, pStackChunkID);
+
+            }
+
+            // Check if the number of arguments is correct
+            // Too few arguments results in 0-values for the later parameters
+            int a = 0;
+            auto& params = F.getArgumentList();
+            if(args.size() > params.size()) {
+                std::cout << "calling function with too many arguments" << std::endl;
+                std::cout << "  #arguments: " << args.size() << std::endl;
+                std::cout << "  #params: " << params.size() << std::endl;
+                assert(0);
+            }
+
+            // Assign the arguments to the parameters
+            auto param = params.begin();
+            for(auto& arg: args) {
+
+                // Map and load the argument
+                auto v = gen.vMap(gctx, arg);
+
+                // Map the parameter register to the location in the state vector
+                auto vParam = gen.vReg(dst_reg, &*param);
+
+                // Perform the store
+                gen.builder.CreateStore(v, vParam);
+
+                // Next
+                param++;
             }
 
             // Set the program counter to the start of the pushed function
@@ -2557,7 +2586,7 @@ public:
             builder.SetInsertPoint(main_start);
             builder.CreateCall(pins("printf"), {generateGlobalString("main_start\n")});
             builder.CreateMemCpy(gctx->svout, src, t_statevector_size, src->getParamAlignment());
-            stack.pushStackFrame(gctx, *module->getFunction("main"), true);
+            stack.pushStackFrame(gctx, *module->getFunction("main"), {}, true);
             //builder.CreateStore(ConstantInt::get(t_int, 1), svout_pc[0]);
             builder.CreateStore(ConstantInt::get(t_int, 1), lts["status"].getValue(gctx->svout));
             builder.CreateBr(f_pins_getnext_end_report);
@@ -2969,7 +2998,11 @@ public:
 
         // If the instruction has a return value, store the result in the SV
         if(IC->getType() != t_void) {
-            assert(valueRegisterIndex[I]);
+            if(valueRegisterIndex.count(I) == 0) {
+                roout << *I << " (" << I << ")" << "\n";
+                roout.flush();
+                assert(0 && "instruction not indexed");
+            }
             builder.CreateStore(IC, vReg(registers, I));
         }
 
@@ -3031,7 +3064,11 @@ public:
 
         // Otherwise, there is an LLVM body available, so it is modeled.
         } else {
-            stack.pushStackFrame(gctx, *F);
+            std::vector<Value*> args;
+            for(int i=0; i < I->getNumArgOperands(); ++i) {
+                args.push_back(I->getArgOperand(i));
+            }
+            stack.pushStackFrame(gctx, *F, args);
             gctx->alteredPC = true;
         }
     }
