@@ -3096,27 +3096,20 @@ public:
             // If this is a hooked function
             if(it != gctx->gen->hookedFunctions.end()) {
 
+                assert(&I->getContext() == &F->getContext());
+
                 // Map the operands
                 std::vector<Value*> args;
                 for(unsigned int i = 0; i < I->getNumArgOperands(); ++i) {
                     auto Arg = I->getArgOperand(i);
 
-                    // Leave constants as they are
-                    if(dyn_cast<Constant>(Arg)) {
-                        args.push_back(Arg);
-
-                    // If we have a known mapping, perform the mapping
-                    } else if(valueRegisterIndex.count(Arg) > 0) {
-                        Arg = builder.CreateLoad(vReg(registers, Arg));
-
-                    // Otherwise, report an error
-                    } else {
-                        roout << "Could not find mapping for " << *Arg << "\n";
-                        roout.flush();
-                    }
+                    Arg = vMap(gctx, Arg);
+                    args.push_back(Arg);
                 }
+                gctx->gen->builder.CreateCall(it->second, args);
 
-                gctx->gen->builder.CreateCall(it->second, {});
+            } else if(F->isIntrinsic()) {
+            } else {
             }
 
         // Otherwise, there is an LLVM body available, so it is modeled.
@@ -3126,8 +3119,8 @@ public:
                 args.push_back(I->getArgOperand(i));
             }
             stack.pushStackFrame(gctx, *F, args);
-            gctx->alteredPC = true;
         }
+        gctx->alteredPC = true;
     }
 
     void generateNextStateForInstruction(GenerationContext* gctx, BranchInst* I) {
