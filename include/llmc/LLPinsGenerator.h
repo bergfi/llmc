@@ -1863,15 +1863,15 @@ public:
         // Determine all the transition groups from the code
         createTransitionGroups();
 
+        // Create the register mapping used to map registers to locations
+        // in the state-vector
+        createRegisterMapping();
+
         // Generate the LLVM types we need
         generateTypes();
 
         // Generate the LLVM functions that we will populate later
         generateSkeleton();
-
-        // Create the register mapping used to map registers to locations
-        // in the state-vector
-        createRegisterMapping();
 
         // Generate the initial state
         generateInitialState();
@@ -2264,11 +2264,34 @@ public:
         t_chunk = dyn_cast<StructType>(pins("pins_chunk_get")->getReturnType());
 
         // Determine the register size
-        t_registers_max = ArrayType::get(t_int, 20); // needs to be based on max #registers of all functions
+        out.reportAction("Determining register size in state vector");
+        out.indent();
+        auto& DL = pinsModule->getDataLayout();
+        size_t registersInBytes = 0;
+        for(auto& kv: registerLayout) {
+            if(!kv.second.registerLayout->isSized()) {
+                roout << "Type is not sized: " << *kv.second.registerLayout << "\n";
+                roout.flush();
+                assert(0);
+            }
+            auto bytesNeeded = DL.getTypeSizeInBits(kv.second.registerLayout);
+            std::stringstream ss;
+            ss << kv.first->getName().str() << " needs " << (bytesNeeded/8) << " bytes";
+            out.reportNote(ss.str());
+            if(registersInBytes < bytesNeeded) {
+                registersInBytes = bytesNeeded;
+            }
+        }
+        out.outdent();
+        t_registers_max = ArrayType::get(t_int, registersInBytes/32); // needs to be based on max #registers of all functions
         t_registers_max_size = builder.CreateGEP( t_registers_max
                                                 , ConstantPointerNull::get(t_registers_max->getPointerTo())
                                                 , {ConstantInt::get(t_int, 1)}
                                                 );
+        std::stringstream ss;
+        ss << "Determined required number of registers: " << (registersInBytes/32) << " slots";
+        out.reportAction(ss.str());
+
         t_registers_max_size = builder.CreatePtrToInt(t_registers_max_size, t_int);
 
         // Creates types to use in the LTS type
