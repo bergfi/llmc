@@ -3125,6 +3125,7 @@ public:
 
     void generateNextStateForInstruction(GenerationContext* gctx, BranchInst* I) {
         auto dst_pc = lts["processes"][0]["pc"].getValue(gctx->svout);
+        auto dst_reg = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
 
         // If this branch instruction has a condition
         if(I->isConditional()) {
@@ -3161,6 +3162,17 @@ public:
                 roout.flush();
             }
         }
+
+        // If the target has PHI nodes, go through them to determine the value
+        // for the PHI node associated with the origin-branch
+        for(unsigned int succ = 0; succ < I->getNumSuccessors(); ++succ) {
+            for(auto& phiNode: I->getSuccessor(succ)->phis()) {
+                // Assign the value to the PHI node
+                // associated with the origin-branch
+                builder.CreateStore(vMap(gctx, phiNode.getIncomingValueForBlock(I->getParent())), vReg(dst_reg, &phiNode));
+            }
+        }
+
     }
 
 
