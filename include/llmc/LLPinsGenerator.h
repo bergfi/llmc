@@ -1758,6 +1758,7 @@ public:
         , out(out)
         , roout(out.getConsoleWriter().ss())
         , stack(*this)
+        , debugChecks(false)
         {
         module = up_module.get();
         pinsModule = nullptr;
@@ -1822,6 +1823,13 @@ public:
         }
 
     }
+
+    /**
+     * @brief
+     */
+     void enableDebugChecks() {
+         debugChecks = true;
+     }
 
     /**
      * @brief Starts the pinsification process.
@@ -3086,9 +3094,44 @@ public:
             builder.CreateStore(IC, vReg(registers, I));
         }
 
+        if(debugChecks) {
+            if(IC->getOpcode() == Instruction::Store) {
+                // Make sure register remain the same
+                auto registers_src = lts["processes"][gctx->thread_id]["r"].getValue(gctx->src);
+                createMemAssert(registers_src, registers, t_registers_max_size);
+            } else if(IC->getOpcode() == Instruction::Load) {
+                // Make sure globals are the same
+                auto globals = lts["globals"].getValue(gctx->svout);
+                auto globals_src = lts["globals"].getValue(gctx->src);
+                createMemAssert(globals_src, globals, generateSizeOf(lts["globals"].getLLVMType()));
+            } else {
+                assert(0);
+            }
+        }
+
         // Upload the new memory chunk
         auto newMem = cm_memory.generatePut(sv_memorylen, sv_memorydata);
         builder.CreateStore(newMem, chunkMemory);
+    }
+
+    void createMemAssert(Value* a, Value* b, Value* size) {
+        a = builder.CreatePointerCast(a, t_voidp);
+        b = builder.CreatePointerCast(b, t_voidp);
+        size = builder.CreateIntCast(size, t_int64, false);
+        Value* cmp = builder.CreateCall(pins("memcmp"), {a, b, size});
+
+        llvmgen::If If(builder, "if_memory_assert");
+        If.setCond(builder.CreateICmpNE(cmp, ConstantInt::get(t_int, 0)));
+        BasicBlock* BBTrue = If.getTrue();
+        If.generate();
+
+        builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
+        builder.CreateCall( pins("printf")
+                          , {generateGlobalString("Memory assertion failed")
+                            }
+                          );
+        builder.CreateCall(pins("exit"), {ConstantInt::get(t_int, 1)});
+        builder.SetInsertPoint(If.getFinal());
     }
 
     /**
