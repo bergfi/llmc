@@ -55,3 +55,7 @@ void llmc_print_chunk(char* data, int len) {
         data++;
     }
 }
+
+void llmc_hook___assert_fail(char* message, char* file, int line, char* x) {
+    printf("ASSERT FAILED[%s:%i]: %s\n", file, line, message);
+}
