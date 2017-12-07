@@ -37,6 +37,7 @@ endif()
 target_link_libraries(libllmc -Wl,-E
     ${FFI_LIBRARY}
     ${LLVM_LIBS}
+    tinfo
     libfrugi
 )
 

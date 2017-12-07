@@ -899,10 +899,12 @@ public:
                 chunkid = gen.builder.CreateLoad(chunkid);
             }
             if(!chunkid->getType()->isIntegerTy()) {
+
+                // Undefined reference since LLVM 5
                 if(auto* I = dyn_cast<Instruction>(chunkid)) {
-                    I->getParent()->dump();
+                    //I->getParent()->dump();
                 } else {
-                    chunkid->dump();
+                    //chunkid->dump();
                 }
                 assert(0);
             }
@@ -1215,16 +1217,15 @@ public:
             // Check if the number of arguments is correct
             // Too few arguments results in 0-values for the later parameters
             int a = 0;
-            auto& params = F.getArgumentList();
-            if(args.size() > params.size()) {
+            if(args.size() > F.arg_size()) {
                 std::cout << "calling function with too many arguments" << std::endl;
                 std::cout << "  #arguments: " << args.size() << std::endl;
-                std::cout << "  #params: " << params.size() << std::endl;
+                std::cout << "  #params: " << F.arg_size() << std::endl;
                 assert(0);
             }
 
             // Assign the arguments to the parameters
-            auto param = params.begin();
+            auto param = F.arg_begin();
             for(auto& arg: args) {
 
                 // Map and load the argument
@@ -2213,14 +2214,14 @@ public:
             nextID = 0;
 
             // Map the arguments
-            for(auto& A: F.getArgumentList()) {
+            for(auto& A: F.args()) {
                 newmap(&F, &A);
             }
 
             // Map the registers
             for(auto& BB: F) {
                 for(auto& I: BB) {
-                    if(I.getType() != t_void) {
+                    if(!I.getType()->isVoidTy()) {
                         newmap(&F, &I);
                     }
                 }
