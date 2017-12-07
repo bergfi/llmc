@@ -2787,14 +2787,23 @@ public:
         // Leave constants as they are
         if(auto v = dyn_cast<GlobalVariable>(OI)) {
             auto idx = valueRegisterIndex[OI];
-            Value* globals = lts["globals"].getValue(gctx->svout);
-            return builder.CreateGEP( globals
-                                    , { ConstantInt::get(t_int, 0)
-                                      , ConstantInt::get(t_int, idx)
-                                      }
-                                    , "global_" + OI->getName()
-                                    );
-            return globals;
+            return lts["globals"][idx].getValue(gctx->svout);
+        } else if(auto ce = dyn_cast<ConstantExpr>(OI)) {
+            std::vector<Value*> args;
+            for(int i = 0, e = ce->getNumOperands(); i < e; ++i) {
+                auto child = ce->getOperand(i);
+                Value* vChild = vMap(gctx, child);
+                args.push_back(vChild);
+            }
+            Value* result = nullptr;
+            switch(ce->getOpcode()) {
+            case Instruction::GetElementPtr:
+                result = builder.CreateGEP(args[0], ArrayRef<Value*>(&*args.begin()+1, &*args.end()));
+                break;
+            default:
+                assert(0);
+            }
+            return result;
         } else if(dyn_cast<Constant>(OI)) {
             return OI;
 
@@ -2807,6 +2816,7 @@ public:
         } else {
             roout << "Could not find mapping for " << *OI << "\n";
             roout.flush();
+            assert(0);
             return OI;
         }
     }
