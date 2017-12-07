@@ -9,6 +9,8 @@ using namespace llmc;
 
 int main(int argc, char* argv[]) {
 
+    MessageFormatter out(std::cout);
+
     // init libfrugi
     System::init(argc, argv);
 
@@ -33,7 +35,7 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
-    ll2pins(input, output);
+    ll2pins(input, output, out);
 
     return 0;
 }

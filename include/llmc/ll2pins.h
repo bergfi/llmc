@@ -4,7 +4,7 @@
 
 namespace llmc {
 
-int ll2pins(File const& input, File const& output) {
+int ll2pins(File const& input, File const& output, MessageFormatter& out) {
     llvm::LLVMContext llvmctx;
     llvm::SMDiagnostic Err;
 
@@ -15,7 +15,7 @@ int ll2pins(File const& input, File const& output) {
         return 1;
     }
 
-    llmc::LLPinsGenerator gen(std::move(llvmModel), std::cout);
+    llmc::LLPinsGenerator gen(std::move(llvmModel), out);
 
     gen.pinsify();
     gen.writeTo(output.getFilePath());

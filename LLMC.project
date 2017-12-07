@@ -114,6 +114,7 @@ unset CXX
         <ClangPP/>
         <SearchPaths>$(ProjectPath)
 $(ProjectPath)/include
+$(ProjectPath)/libfrugi/include
 /home/bergfi/root/include</SearchPaths>
       </Completion>
     </Configuration>

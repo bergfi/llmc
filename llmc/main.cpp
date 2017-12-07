@@ -53,6 +53,7 @@ bool compile(File const& bin_llc, File const& input, File const& output, Message
     std::stringstream ss;
     ss << "Took " << stats.time_monraw << " second (user: " << stats.time_user << ", system: " << stats.time_system << ")";
     out.reportAction(ss.str());
+    return !output.exists();
 }
 
 bool link(File const& bin_cc, File const& input, File const& output, MessageFormatter& out) {
@@ -98,6 +99,7 @@ bool link(File const& bin_cc, File const& input, File const& output, MessageForm
     std::stringstream ss;
     ss << "Took " << stats.time_monraw << " second (user: " << stats.time_user << ", system: " << stats.time_system << ")";
     out.reportAction(ss.str());
+    return !output.exists();
 }
 
 //bool model_check(File const& bin_ltsmin, File const& input, File const& output, MessageFormatter& out) {
@@ -166,22 +168,25 @@ int main(int argc, char* argv[]) {
     }
 
     // .ll -> .pins.ll
-    if(ll2pins(input, output_ll)) {
+    out.reportAction("Pinsifying...");
+    if(ll2pins(input, output_ll, out)) {
         out.reportError("Pinsifying failed");
         exit(1);
     }
 
     // .pins.ll -> .o
     if(compile(bin_llc, output_ll, output_o, out)) {
-        out.reportError("Compiling failed");
+        out.reportError("Compilation failed");
         exit(1);
     }
+    out.reportSuccess("Compilation successful");
 
     // .o -> .so
     if(link(bin_cc, output_o, output_so, out)) {
         out.reportError("Linking failed");
         exit(1);
     }
+    out.reportSuccess("Linking successful");
 
     // LTSmin
 //    if(model_check(bin_ltsmin, output_so, output_dot, out)) {

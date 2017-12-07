@@ -15,6 +15,7 @@
 
 #include <llmc/llvmincludes.h>
 
+#include <libfrugi/MessageFormatter.h>
 #include <libfrugi/FileSystem.h>
 #include <libfrugi/System.h>
 #include <ltsmin/pins.h>
@@ -719,8 +720,19 @@ public:
                 assert(c->getParent() == this);
                 if(!c->verify()) r = false;
             }
-            if(!getType()) {
-                std::cout << "Type is not set: " << name << std::endl;
+            if(name.empty()) {
+                gen()->out.reportFailure("Node without a name");
+                gen()->out.indent();
+                if(getType()) {
+                    gen()->out.reportNote("Type: " + getType()->_name);
+                }
+                if(!typeName.empty()) {
+                    gen()->out.reportNote("TypeName: " + typeName);
+                }
+                gen()->out.outdent();
+            } else if(!getType()) {
+                gen()->out.reportFailure("Type is not set: " + name);
+                //std::cout <<  << name << std::endl;
                 //assert(0);
                 r = false;
             }
@@ -1709,7 +1721,7 @@ private:
     std::unordered_map<Function*, FunctionData> registerLayout;
     int nextProgramLocation;
 
-    std::ostream& out;
+    MessageFormatter& out;
     raw_os_ostream roout;
 
     std::unordered_map<std::string, GenerationContext> generationContexts;
@@ -1732,8 +1744,10 @@ private:
 
     std::unordered_map<std::string, Function*> hookedFunctions;
 
+    bool debugChecks;
+
 public:
-    LLPinsGenerator(std::unique_ptr<llvm::Module> modul, std::ostream& out)
+    LLPinsGenerator(std::unique_ptr<llvm::Module> modul, MessageFormatter& out)
         : up_module(std::move(modul))
         , ctx(up_module->getContext())
         , t_statevector(nullptr)
@@ -1741,7 +1755,7 @@ public:
         , builder(ctx)
         , nextProgramLocation(1)
         , out(out)
-        , roout(out)
+        , roout(out.getConsoleWriter().ss())
         , stack(*this)
         {
         module = up_module.get();
@@ -1776,12 +1790,13 @@ public:
             }
         }
 
-        if(moduleFile.getFilePath() != "") {
+        if(moduleFile.exists()) {
             moduleFile.fix();
             // Load the LLVM module
             SMDiagnostic diag;
             auto module = llvm::parseAssemblyFile(moduleFile.getFilePath(), diag, ctx);
             if(!module) {
+                out.reportError("Error oading module " + name + ": " + moduleFile.getFilePath() + ":");
                 fflush(stdout);
                 printf("=======\n");
                 fflush(stdout);
@@ -1790,16 +1805,17 @@ public:
                 printf("=======\n");
                 fflush(stdout);
                 assert(0 && "oh noes");
+            } else {
+                out.reportNote("Loaded module " + name + ": " + moduleFile.getFilePath());
             }
             return std::move(module);
         } else {
-            std::cout << "Error loading module "
-                      << name
-                      << ", file does not exist: `"
-                      << moduleFile
-                      << "'"
-                      << std::endl
-                      ;
+            out.reportError( "Error loading module "
+                           + name
+                           + ", file does not exist: `"
+                           + moduleFile.getFilePath()
+                           + "'"
+                           );
             assert(0 && "oh noes");
             return std::unique_ptr<Module>(nullptr);
         }
@@ -1814,8 +1830,11 @@ public:
 
         pinsModule = new Module("pinsModule", ctx);
 
+        out.reportAction("Loading internal modules...");
+        out.indent();
         up_libllmcosModule = loadModule("libllmcos.ll");
         up_pinsHeaderModule = loadModule("pins.h.ll");
+        out.outdent();
 
         // Copy function declarations from the loaded modules into the
         // module of the model we are now generating such that we can call
@@ -1825,9 +1844,18 @@ public:
                 Function::Create(f.getFunctionType(), f.getLinkage(), f.getName(), pinsModule);
             }
         }
+        out.reportAction("Instrumenting hooks");
         for(auto& f: up_libllmcosModule->getFunctionList()) {
-            if(!pinsModule->getFunction(f.getName().str())) {
-                Function::Create(f.getFunctionType(), f.getLinkage(), f.getName(), pinsModule);
+            auto const& functionName = f.getName().str();
+            if(!pinsModule->getFunction(functionName)) {
+                auto F = Function::Create(f.getFunctionType(), f.getLinkage(), f.getName(), pinsModule);
+                out.indent();
+                if(!functionName.compare(0, 10, "llmc_hook_")) {
+                    std::string name = functionName.substr(10);
+                    hookedFunctions[name] = F;
+                    out.reportNote("Hooking " + name + " to " + functionName);
+                }
+                out.outdent();
             }
         }
 
@@ -1862,7 +1890,15 @@ public:
 
         //pinsModule->dump();
 
-        verifyModule(*pinsModule, &roout);
+        out.reportAction("Verifying module...");
+        out.indent();
+
+        if(verifyModule(*pinsModule, &roout)) {
+            out.reportFailure("Verification failed");
+        } else {
+            out.reportSuccess("Module OK");
+        }
+        out.outdent();
     }
 
     /**
@@ -2054,8 +2090,6 @@ public:
             builder.SetInsertPoint(end);
             builder.CreateRet(ConstantInt::get(t_int, 0));
 
-            llvm::verifyFunction(*f_pins_getnextall, &llvm::outs());
-
         }
 
         if(f_pins_getnext) {
@@ -2153,7 +2187,6 @@ public:
             builder.SetInsertPoint(entry);
             builder.CreateBr(doswitch);
 
-            llvm::verifyFunction(*f_pins_getnext, &llvm::outs());
         }
     }
 
@@ -2166,6 +2199,7 @@ public:
         };
 
         // Globals
+        // Assign every global an index, starting at 0
         for(auto& v: module->getGlobalList()) {
             valueRegisterIndex[&v] = nextID++;
         }
@@ -2358,8 +2392,17 @@ public:
 //        lts << labels;
         lts << edges;
         lts.finish();
-        lts.verify();
-        //lts.dump();
+
+        out.reportAction("Verifying LTS...");
+        out.indent();
+
+        if(lts.verify()) {
+            out.reportSuccess("Module OK");
+        } else {
+            lts.dump();
+            out.reportFailure("Verification failed");
+        }
+        out.outdent();
 
         // Get the struct types
         t_statevector = dyn_cast<StructType>(sv->getLLVMType());
@@ -2538,7 +2581,6 @@ public:
             }
 
         }
-        llvm::verifyFunction(*f_pins_getnext, &llvm::outs());
     }
 
     /**
@@ -2605,14 +2647,17 @@ public:
         // such as the initial call to main
         createDefaultTransitionGroups();
 
-        out << "Source module..." << std::endl;
         //module->dump();
         out << "Transition groups..." << std::endl;
+        out.indent();
         for(auto& F: *module) {
             if(F.isDeclaration()) continue;
             out << "Function [" << F.getName().str() << "]" <<  std::endl;
+            out.indent();
             createTransitionGroupsForFunction(F);
+            out.outdent();
         }
+        out.outdent();
         out << "groups: " << transitionGroups.size() <<  std::endl;
     }
 
@@ -2723,7 +2768,10 @@ public:
                                                   , PointerType::get(registerLayout[&F].registerLayout, 0)
                                                   , F.getName().str() + "_registers"
                                                   );
-        auto idx = valueRegisterIndex[reg];
+        auto iIdx = valueRegisterIndex.find(reg);
+        assert(iIdx != valueRegisterIndex.end());
+        auto idx = iIdx->second;
+
         auto v = builder.CreateGEP( regs
                                   , { ConstantInt::get(t_int, 0)
                                     , ConstantInt::get(t_int, idx)
@@ -2816,7 +2864,6 @@ public:
     void generateNextStateForInstruction(GenerationContext* gctx, Instruction* I) {
 
         // Debug
-        roout << "Handling instruction " << *I << "\n"; roout.flush();
         std::string str;
         raw_string_ostream strout(str);
         if(valueRegisterIndex.count(I)) {
@@ -2858,7 +2905,6 @@ public:
             case Instruction::AtomicRMW:
             case Instruction::CleanupPad:
             case Instruction::PHI:
-                roout << "Unsupported instruction: " << *I << "\n";
                 return;
             case Instruction::Call:
                 return generateNextStateForCall(gctx, dyn_cast<CallInst>(I));
