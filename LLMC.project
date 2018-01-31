@@ -18,13 +18,14 @@
   </Reconciliation>
   <VirtualDirectory Name="include">
     <VirtualDirectory Name="llmc">
-      <File Name="include/llmc/LLPinsGenerator.h"/>
       <File Name="include/llmc/bcloader.h"/>
       <File Name="include/llmc/llmc.h"/>
       <File Name="include/llmc/llmodel.h"/>
       <File Name="include/llmc/llvmgen.h"/>
       <File Name="include/llmc/llvmincludes.h"/>
       <File Name="include/llmc/ll2pins.h"/>
+      <File Name="include/llmc/LLPinsGenerator.h"/>
+      <File Name="include/llmc/ssgen.h"/>
     </VirtualDirectory>
   </VirtualDirectory>
   <Description/>
@@ -56,6 +57,7 @@
   <VirtualDirectory Name="llmc">
     <File Name="llmc/CMakeLists.txt"/>
     <File Name="llmc/main.cpp"/>
+    <File Name="llmc/ssgen.cpp"/>
   </VirtualDirectory>
   <VirtualDirectory Name="libllmc">
     <File Name="libllmc/CMakeLists.txt"/>
@@ -79,7 +81,7 @@
       </Compiler>
       <Linker Options="" Required="yes"/>
       <ResourceCompiler Options="" Required="no"/>
-      <General OutputFile="" IntermediateDirectory="$(ProjectPath)/build/$(ConfigurationName)" Command="$(ProjectPath)/build/$(ConfigurationName)/llmc/llmc" CommandArguments="//home/bergfi/development/phdthesis/code/llmc/tests/correctness/helloworld/helloworld.ll" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="$(IntermediateDirectory)" PauseExecWhenProcTerminates="yes" IsGUIProgram="no" IsEnabled="yes"/>
+      <General OutputFile="" IntermediateDirectory="$(ProjectPath)/build/$(ConfigurationName)" Command="$(ProjectPath)/build/$(ConfigurationName)/llmc/llmc" CommandArguments="//home/bergfi/development/phdthesis/code/llmc/tests/correctness/while_simple/test.ll" UseSeparateDebugArgs="no" DebugArguments="" WorkingDirectory="$(IntermediateDirectory)" PauseExecWhenProcTerminates="yes" IsGUIProgram="no" IsEnabled="yes"/>
       <BuildSystem Name="CMake"/>
       <Environment EnvVarSetName="&lt;Use Defaults&gt;" DbgSetName="&lt;Use Defaults&gt;">
         <![CDATA[]]>

@@ -5,6 +5,7 @@
 #include <libfrugi/Shell.h>
 #include <libfrugi/System.h>
 #include <llmc/ll2pins.h>
+#include <llmc/ssgen.h>
 #include <sstream>
 
 #define VERBOSITY_SEARCHING 2
@@ -199,6 +200,10 @@ int main(int argc, char* argv[]) {
 //        out.reportError("Printing to PNG failed");
 //        exit(1);
 //    }
+
+    ssgen ss(model::getPINS(output_so.getFileRealPath()));
+
+    ss.go();
 
     return 0;
 }
