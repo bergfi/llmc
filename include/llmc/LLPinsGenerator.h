@@ -1221,7 +1221,6 @@ public:
 
             // Check if the number of arguments is correct
             // Too few arguments results in 0-values for the later parameters
-            int a = 0;
             if(args.size() > F.arg_size()) {
                 std::cout << "calling function with too many arguments" << std::endl;
                 std::cout << "  #arguments: " << args.size() << std::endl;
@@ -1294,6 +1293,7 @@ public:
                 Value* chData = gen.generateChunkGetData(chunk);
 
                 // Pop the last frame from the stack
+                // Instead of this, we could remember the chunkID of the previous stack-state
                 Value* newLength = builder.CreateSub( chLen
                                                     , gen.generateSizeOf(t_frame)
                                                     , "length_without_popped_frame"
@@ -1302,7 +1302,7 @@ public:
                 auto newStackChunkID = cm_stack.generatePut(chunk);
                 builder.CreateStore(newStackChunkID, pStackChunkID);
 
-                // Load the PC of the caller function from thee frame and store that as the new PC
+                // Load the PC of the caller function from the frame and store that as the new PC
                 auto popped_frame = builder.CreateGEP(chData, newLength);
                 popped_frame = builder.CreatePointerCast(popped_frame, t_framep);
                 auto prevPC = builder.CreateGEP( popped_frame
@@ -2633,6 +2633,7 @@ public:
             }
 
         }
+
     }
 
     /**
@@ -2836,7 +2837,7 @@ public:
     Value* vMap(GenerationContext* gctx, Value* OI) {
 
         // Leave constants as they are
-        if(auto v = dyn_cast<GlobalVariable>(OI)) {
+        if(dyn_cast<GlobalVariable>(OI)) {
             auto idx = valueRegisterIndex[OI];
             return lts["globals"][idx].getValue(gctx->svout);
         } else if(auto ce = dyn_cast<ConstantExpr>(OI)) {
@@ -3242,7 +3243,6 @@ public:
         Function* F = I->getCalledFunction();
         if(F->isDeclaration()) {
 
-            auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
             auto it = gctx->gen->hookedFunctions.find(F->getName());
 
             // If this is a hooked function
@@ -3268,7 +3268,7 @@ public:
         // Otherwise, there is an LLVM body available, so it is modeled.
         } else {
             std::vector<Value*> args;
-            for(int i=0; i < I->getNumArgOperands(); ++i) {
+            for(unsigned int i=0; i < I->getNumArgOperands(); ++i) {
                 args.push_back(I->getArgOperand(i));
             }
             stack.pushStackFrame(gctx, *F, args);
@@ -3301,6 +3301,7 @@ public:
                                                     , ConstantInt::get(gctx->gen->t_int, locFalse)
                                                     );
                 gctx->gen->builder.CreateStore(newLoc, dst_pc);
+
             } else {
                 roout << "Conditional Branch has more or less than 2 successors: " << *I << "\n";
                 roout.flush();
@@ -3594,7 +3595,6 @@ public:
 
             // Get the size of the variable
             Constant* varsize = node->getSizeValueInSlots();
-            ConstantInt* varsize_int = dyn_cast<ConstantInt>(varsize);
 
             // Create BasicBlocks
             BasicBlock* forcond = for_end;
