@@ -1944,6 +1944,8 @@ public:
     struct DebugInfo {
       DICompileUnit *TheCU;
       DISubprogram *getnext;
+      DISubprogram *getnextall;
+      DISubprogram *moduleinit;
       DIType *DblTy;
       std::vector<DIScope *> LexicalBlocks;
 
@@ -1954,38 +1956,34 @@ public:
      * @brief Attach debug info to all generated instructions.
      */
     void generateDebugInfo() {
+        pinsModule->addModuleFlag(Module::Warning, "Dwarf Version", DEBUG_METADATA_VERSION);
         pinsModule->addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
+        pinsModule->addModuleFlag(Module::Max, "PIC Level", 2);
 
-        DIBuilder dbuilder(*pinsModule);
+        DIBuilder& dbuilder = *getDebugBuilder();
 
         DebugInfo dbgInfo;
-#if LLVM_VERSION_MAJOR < 4
-        dbgInfo.TheCU = dbuilder.createCompileUnit( dwarf::DW_LANG_hi_user
-                                                  , pinsModule->getName(), ".", "llmc", false, "", 0);
-#else
-        auto file = dbuilder.createFile(pinsModule->getName(), ".");
-        dbgInfo.TheCU = dbuilder.createCompileUnit(dwarf::DW_LANG_hi_user, file, "llmc", false, "", 0);
-#endif
-        DITypeRefArray a = dbuilder.getOrCreateTypeArray({});
-        auto d_getnext = dbuilder.createSubroutineType(a);
-        dbgInfo.getnext = dbuilder.createFunction( dbgInfo.TheCU
-                                                 , "getnext"
-                                                 , ""
-                                                 , dbgInfo.TheCU->getFile()
-                                                 , 0
-                                                 , d_getnext
-                                                 , false
-                                                 , true
-                                                 , 0
-                                                 );
+        dbgInfo.TheCU = getCompileUnit();
+        assert(dbgInfo.TheCU);
+        assert(dbgInfo.TheCU->getFile());
+
+        dbgInfo.getnext = getDebugScopeForFunction(f_pins_getnext);
+
+        dbgInfo.moduleinit = getDebugScopeForFunction(pinsModule->getFunction("pins_model_init"));
 
         dbuilder.finalize();
 
         int l = 1;
         for(auto& F: *pinsModule) {
+            DISubprogram* dip = F.getSubprogram();
+            if(!dip) {
+                continue;
+            }
             for(auto& BB: F) {
                 for(Instruction& I: BB) {
-                    I.setDebugLoc(DILocation::get(ctx, l, 1, dbgInfo.getnext, nullptr));
+                    if(!I.getDebugLoc()) {
+                        I.setDebugLoc(DILocation::get(ctx, l, 1, dip, nullptr));
+                    }
                     l++;
                 }
             }
@@ -2909,12 +2907,14 @@ public:
 
         // Insert the instruction
         builder.Insert(IC);
+        setDebugLocation(IC, __FILE__, __LINE__);
 
         // If the instruction has a return value, store the result in the SV
         if(IC->getType() != t_void) {
             assert(valueRegisterIndex[I]);
             auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-            builder.CreateStore(IC, vReg(registers, I));
+            auto store = builder.CreateStore(IC, vReg(registers, I));
+            setDebugLocation(store, __FILE__, __LINE__);
         }
     }
 
@@ -3026,7 +3026,8 @@ public:
         auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         Value* ret = vReg(registers, I);
         ptr = gctx->gen->builder.CreateIntToPtr(ptr, I->getType());
-        gctx->gen->builder.CreateStore(ptr, ret);
+        auto store = gctx->gen->builder.CreateStore(ptr, ret);
+        setDebugLocation(store, __FILE__, __LINE__);
 
         // Debug
         builder.CreateCall(pins("printf"), {generateGlobalString("stored %i to %p\n"), ptr, ret});
@@ -3044,6 +3045,65 @@ public:
                                                          , generateGlobalString(strout.str())
                                                          );
         gctx->edgeLabels["action"] = actionLabelChunkID;
+    }
+
+    DIBuilder* getDebugBuilder() {
+        static DIBuilder* dib = nullptr;
+        if(!dib) {
+            dib = new DIBuilder(*pinsModule);
+        }
+        return dib;
+    }
+
+    DICompileUnit* getCompileUnit() {
+        static DICompileUnit* cu = nullptr;
+        if(!cu) {
+#if LLVM_VERSION_MAJOR < 4
+            cu = getDebugBuilder()->createCompileUnit( dwarf::DW_LANG_hi_user
+                                                      , pinsModule->getName(), ".", "llmc", false, "", 0);
+#else
+            auto file = getDebugBuilder()->createFile(pinsModule->getName(), ".");
+            cu = getDebugBuilder()->createCompileUnit(dwarf::DW_LANG_C, file, "llmc", 0, "", 0);
+#endif
+        }
+        return cu;
+    }
+
+    DIScope* getDebugScopeForSourceFile(DIScope* functionScope, std::string const& fileName) {
+        return functionScope;
+        auto file = getDebugBuilder()->createFile(pinsModule->getName(), ".");
+        return DILexicalBlockFile::get(functionScope->getContext(), functionScope, file, 0);
+    }
+
+    DISubprogram* getDebugScopeForFunction(Function* F) {
+        static std::unordered_map<Function*, DISubprogram*> scopes;
+        DISubprogram*& scope = scopes[F];
+        if(!scope) {
+            auto a = getDebugBuilder()->getOrCreateTypeArray({});
+            auto d_getnext = getDebugBuilder()->createSubroutineType(a);
+            scope = getDebugBuilder()->createFunction( getCompileUnit()->getFile()
+                                                     , F->getName()
+                                                     , ""
+                                                     , getCompileUnit()->getFile()
+                                                     , 0
+                                                     , d_getnext
+                                                     , false
+                                                     , true
+                                                     , 0
+                                                     , DINode::FlagPrototyped
+                                                     , false
+                                                     );
+            F->setSubprogram(scope);
+        }
+        return scope;
+    }
+
+    void setDebugLocation(Instruction* I, std::string const& file, int linenr) {
+        //auto f = getDebugBuilder()->createFile(file, ".");
+        I->setDebugLoc(DebugLoc::get( linenr
+                                    , 0
+                                    , getDebugScopeForSourceFile(getDebugScopeForFunction(I->getParent()->getParent()), file)
+        ));
     }
 
     /**
@@ -3105,6 +3165,7 @@ public:
 
         // Insert the cloned instruction
         builder.Insert(IC);
+        setDebugLocation(IC, __FILE__, __LINE__);
 
         // If the instruction has a return value, store the result in the SV
         if(IC->getType() != t_void) {
@@ -3140,7 +3201,8 @@ public:
         a = builder.CreatePointerCast(a, t_voidp);
         b = builder.CreatePointerCast(b, t_voidp);
         size = builder.CreateIntCast(size, t_int64, false);
-        Value* cmp = builder.CreateCall(pins("memcmp"), {a, b, size});
+        Instruction* cmp = builder.CreateCall(pins("memcmp"), {a, b, size});
+        setDebugLocation(cmp, __FILE__, __LINE__);
 
         llvmgen::If If(builder, "if_memory_assert");
         If.setCond(builder.CreateICmpNE(cmp, ConstantInt::get(t_int, 0)));
@@ -3148,11 +3210,13 @@ public:
         If.generate();
 
         builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
-        builder.CreateCall( pins("printf")
+        auto call = builder.CreateCall( pins("printf")
                           , {generateGlobalString("Memory assertion failed")
                             }
                           );
-        builder.CreateCall(pins("exit"), {ConstantInt::get(t_int, 1)});
+        setDebugLocation(call, __FILE__, __LINE__);
+        call = builder.CreateCall(pins("exit"), {ConstantInt::get(t_int, 1)});
+        setDebugLocation(call, __FILE__, __LINE__);
         builder.SetInsertPoint(If.getFinal());
     }
 
@@ -3194,7 +3258,8 @@ public:
                     Arg = vMap(gctx, Arg);
                     args.push_back(Arg);
                 }
-                gctx->gen->builder.CreateCall(it->second, args);
+                auto call = gctx->gen->builder.CreateCall(it->second, args);
+                setDebugLocation(call, __FILE__, __LINE__);
 
             } else if(F->isIntrinsic()) {
             } else {
