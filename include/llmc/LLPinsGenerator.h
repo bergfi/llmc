@@ -1423,19 +1423,36 @@ public:
          * @return Value Pointer to the newly allocated memory
          */
         Value* malloc(Value* n) {
+
+            download();
+
             llvmgen::BBComment(gctx->gen->builder, "Heap: malloc");
             llvm::Function* F = gctx->gen->llmc_func("llmc_os_malloc");
             auto vThreadID = ConstantInt::get(F->getFunctionType()->getParamType(4), gctx->thread_id);
             auto vN = gctx->gen->builder.CreateIntCast(n, F->getFunctionType()->getParamType(5), false);
-            return gctx->gen->builder.CreateCall(F
-                                                , { memory_len
-                                                  , memory_data
-                                                  , memory_info_len
-                                                  , memory_info_data
-                                                  , vThreadID
-                                                  , vN
-                                                  }
-                                                );
+
+            auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
+            auto svMemoryInfo = gctx->gen->lts["processes"][gctx->thread_id]["memory_info"].getValue(sv);
+
+            auto memory = cm_memory.generateCloneAndAppend(svMemory, nullptr, n);
+
+            Value* res =  gctx->gen->builder.CreateCall( F
+                                                       , { memory_len
+                                                         , memory_data
+                                                         , memory_info_len
+                                                         , memory_info_data
+                                                         , vThreadID
+                                                         , vN
+                                                         }
+                                                       );
+
+            auto v_memory_info_data = gctx->gen->builder.CreateLoad(memory_info_data, "memory_info_data");
+            auto v_memory_info_len = gctx->gen->builder.CreateLoad(memory_info_len, "memory_info_len");
+            auto memory_info = cm_memory_info.generatePut(v_memory_info_len, v_memory_info_data);
+            gctx->gen->builder.CreateStore(memory, svMemory);
+            gctx->gen->builder.CreateStore(memory_info, svMemoryInfo);
+
+            return res;
         }
 
         /**
@@ -3000,7 +3017,7 @@ public:
 
         // Download the heap
         Heap heap(gctx, gctx->svout);
-        heap.download();
+        //heap.download();
 
         // Perform the malloc
         auto ptr = heap.malloc(I);
@@ -3015,7 +3032,7 @@ public:
         builder.CreateCall(pins("printf"), {generateGlobalString("stored %i to %p\n"), ptr, ret});
 
         // Upload the heap
-        heap.upload();
+        //heap.upload();
 
         // Action label
         std::string str;

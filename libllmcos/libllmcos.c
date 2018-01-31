@@ -39,10 +39,10 @@ intptr_t llmc_os_malloc(int* data_len, char** p_data_data, int* info_len, char**
     int at = info->start + info->size;
     info->size += n;
 
-    char* newp = realloc(*p_data_data, info->start + info->size);
-    assert(newp);
-    memset(newp+at, 0, n);
-    *p_data_data = newp;
+    //char* newp = realloc(*p_data_data, info->start + info->size);
+    //assert(newp);
+    //memset(newp+at, 0, n);
+    //*p_data_data = newp;
     *data_len = info->start + info->size;
 
     return at;
