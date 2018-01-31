@@ -1022,6 +1022,13 @@ public:
          *
          *  Clone:    ----xxxxxxxx--------
          *
+         *                                    v------- offset
+         *  Original: --------------------
+         *                                    <-len-->
+         *  Data:                             xxxxxxxx
+         *
+         *  Clone:    --------------------0000xxxxxxxx
+         *
          * @param chunkid The chunkID of the chunk to clone
          * @param offset Where the data is to be written in the clone
          * @param data Data to overwrite the clone with
@@ -1074,11 +1081,19 @@ public:
                                     , chLen
                                     , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
                                     );
-            gen.builder.CreateMemCpy( gen.builder.CreateGEP(copy, {chLen})
-                                    , data
-                                    , len
-                                    , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
-                                    );
+            if(data) {
+                gen.builder.CreateMemCpy( gen.builder.CreateGEP(copy, {chLen})
+                                        , data
+                                        , len
+                                        , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
+                                        );
+            } else {
+                gen.builder.CreateMemSet( gen.builder.CreateGEP(copy, {chLen})
+                                        , ConstantInt::get(gen.t_int8, 0)
+                                        , len
+                                        , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
+                                        );
+            }
             return generatePut(newLength, copy);
         }
 
