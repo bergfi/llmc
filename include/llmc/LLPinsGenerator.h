@@ -942,17 +942,7 @@ public:
             data = gen.builder.CreatePointerCast(data, gen.t_chunk->getElementType(1));
             Value* chunk = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), len, {0});
             chunk = gen.builder.CreateInsertValue(chunk, data, {1});
-            gen.builder.CreateCall( gen.pins("printf")
-                                  , {gen.generateGlobalString("CHUNK[" + type->_name + "] put of %i bytes:")
-                                    , len
-                                    }
-                                  );
-            gen.builder.CreateCall(gen.pins("llmc_print_chunk"), {data, len});
-            gen.builder.CreateCall(gen.pins("printf"), {gen.generateGlobalString("\n")});
-            return gen.builder.CreateCall( gen.pins("pins_chunk_put")
-                                         , {model, ConstantInt::get(gen.t_int, idx), chunk}
-                                         , "chunkid." + type->_name
-                                         );
+            return generatePut(chunk);
         }
 
         /**
