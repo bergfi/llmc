@@ -109,6 +109,15 @@ bool link(File const& bin_cc, File const& input, File const& output, MessageForm
 //bool dot(File const& bin_dot, File const& input, File const& output, MessageFormatter& out) {
 //}
 
+void go(std::string soFile) {
+
+    auto model = model::getPINS(soFile);
+    assert(model);
+    ssgen_st ss(model);
+
+    ss.go();
+}
+
 int main(int argc, char* argv[]) {
 
     MessageFormatter out(std::cout);
@@ -123,6 +132,7 @@ int main(int argc, char* argv[]) {
     File bin_cc;
     File bin_ltsmin;
     File bin_dot;
+
     findBinary("llc", out, bin_llc);
     if(findBinary("gcc", out, bin_cc)) {
         findBinary("clang", out, bin_cc);
@@ -145,6 +155,11 @@ int main(int argc, char* argv[]) {
     File output_so = input.newWithExtension("so");
     File output_dot = input.newWithExtension("dot");
     File output_png = input.newWithExtension("png");
+
+    if(input.getFileExtension()=="so") {
+        go(input.getFileRealPath());
+        return 0;
+    }
 
     if(!FileSystem::hasAccessTo(input, R_OK)) {
         out.indent();
@@ -201,9 +216,7 @@ int main(int argc, char* argv[]) {
 //        exit(1);
 //    }
 
-    ssgen ss(model::getPINS(output_so.getFileRealPath()));
-
-    ss.go();
+    go(output_so.getFileRealPath());
 
     return 0;
 }

@@ -26,6 +26,7 @@
       <File Name="include/llmc/ll2pins.h"/>
       <File Name="include/llmc/LLPinsGenerator.h"/>
       <File Name="include/llmc/ssgen.h"/>
+      <File Name="include/llmc/treestore.h"/>
     </VirtualDirectory>
   </VirtualDirectory>
   <Description/>

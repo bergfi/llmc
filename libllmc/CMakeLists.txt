@@ -19,7 +19,7 @@ add_library(libllmc
 )
 set_target_properties(libllmc PROPERTIES OUTPUT_NAME "llmc")
 set_property(TARGET libllmc PROPERTY POSITION_INDEPENDENT_CODE ON)
-set_property(TARGET libllmc PROPERTY CXX_STANDARD 11)
+set_property(TARGET libllmc PROPERTY CXX_STANDARD 14)
 set_property(TARGET libllmc PROPERTY CXX_STANDARD_REQUIRED ON)
 
 # FFI library

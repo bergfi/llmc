@@ -20,21 +20,22 @@ model* model::getPINS(std::string const& filename) {
     return model_pins_so::get(filename);
 }
 
-int model_pins_so::getNextAll(State const& s, ssgen* ctx) {
+int model_pins_so::getNextAll(TypeInstance const& s, ssgen* ctx) {
     //_pins_getnextall(nullptr, (int*)s.data(), (TransitionCB)_reportTransition_cb, ctx);
+    auto cb = (TransitionCB)ctx->getCB_ReportTransition();
     for(int tg = 0; tg < this->_tgroups; ++tg) {
-        _pins_getnext(nullptr, tg, ((int*)s.data())+1, (TransitionCB)_reportTransition_cb, ctx);
+        _pins_getnext((model_t)ctx, tg, ((int*)s.data()), cb, ctx);
     }
     return 0;
 }
 
-void model_pins_so::_reportTransition_cb(void* s, void* tinfo, void* state, void* changes) {
-    ssgen* ss = static_cast<ssgen*>(s);
-    model_pins_so* model = reinterpret_cast<model_pins_so*>(ss->getModel());
-    int* data = (int*)malloc(sizeof(int) + model->getLength());
-    *data = model->getLength();
-    memmove(data+1, state, model->getLength());
-    ss->reportTransition(tinfo, data, changes);
+int model_pins_so::getNextAll(size_t len, void const* data, ssgen* ctx) {
+    //_pins_getnextall(nullptr, (int*)s.data(), (TransitionCB)_reportTransition_cb, ctx);
+    auto cb = (TransitionCB)ctx->getCB_ReportTransition();
+    for(int tg = 0; tg < this->_tgroups; ++tg) {
+        _pins_getnext((model_t)ctx, tg, ((int*)data), cb, ctx);
+    }
+    return 0;
 }
 
 #include "stdint.h" /* Replace with <stdint.h> if appropriate */
@@ -95,45 +96,53 @@ int rem;
 }
 
 extern "C" void GBsetInitialState(model_t ctx, int* state) {
-    model_pins_so* model = reinterpret_cast<model_pins_so*>(ctx);
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    model_pins_so* model = reinterpret_cast<model_pins_so*>(ss->getModel());
     model->setInitialState(state);
 }
 
 extern "C" void GBsetLTStype(model_t ctx, lts_type_t ltstype) {
-    model_pins_so* model = reinterpret_cast<model_pins_so*>(ctx);
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    model_pins_so* model = reinterpret_cast<model_pins_so*>(ss->getModel());
     model->setLength(ltstype->state_length*4);
 }
 
 extern "C" void GBsetDMInfo(model_t ctx, matrix_t* dm) {
-    model_pins_so* model = reinterpret_cast<model_pins_so*>(ctx);
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    model_pins_so* model = reinterpret_cast<model_pins_so*>(ss->getModel());
     model->setTransitionGroups(dm->rows);
 }
 
-class chunkmanager {
-public:
-    std::unordered_map<int, State> chunks;
-    int chunkidx;
-};
+//class chunkmanager {
+//public:
+//    std::unordered_map<int, State> chunks;
+//    int chunkidx;
+//};
 
-std::unordered_map<int, chunkmanager> chunkmanagers;
+//std::unordered_map<int, chunkmanager> chunkmanagers;
 
-extern "C" int pins_chunk_put(void* ctx, int type, chunk c) {
-    chunkmanager& cm = chunkmanagers[type];
-    printf("pins_chunk_put %p %i %i\n", ctx, type, cm.chunkidx);
-    cm.chunks[cm.chunkidx] = State::clone(c.len, c.data);
-    return cm.chunkidx++;
+extern "C" {
+int pins_chunk_put(void* ctx, int type, chunk c) {
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    return ss->pins_chunk_put(ctx, type, c);
 }
-
-extern "C" chunk pins_chunk_get(void* ctx, int type, int idx) {
-    chunkmanager& cm = chunkmanagers[type];
-    printf("pins_chunk_get %p %i %i\n", ctx, type, idx);
-    int* d = ((int*)cm.chunks[idx].data());
-    return chunk{*d, (char*)(d+1)};
+chunk pins_chunk_get(void* ctx, int type, int idx) {
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    return ss->pins_chunk_get(ctx, type, idx);
+}
+int pins_chunk_cam(void* ctx, int type, int idx, int offset, char* data, int len) {
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    return ss->pins_chunk_cam(ctx, type, idx, offset, data, len);
+}
 }
 
 extern "C" void GBsetNextStateLong(model_t ctx, next_method_grey_t f) {
-    model_pins_so* model = reinterpret_cast<model_pins_so*>(ctx);
+    ssgen* ss = reinterpret_cast<ssgen*>(ctx);
+    model_pins_so* model = reinterpret_cast<model_pins_so*>(ss->getModel());
     model->setGetNext(f);
+}
+
+extern "C" void GBsetNextStateAll(model_t ctx, next_method_black_t f) {
 }
 
 extern "C" void dm_create(matrix_t* m, const int rows, const int cols) {
@@ -143,7 +152,10 @@ extern "C" void dm_create(matrix_t* m, const int rows, const int cols) {
 }
 extern "C" void dm_fill(matrix_t*) {}
 extern "C" lts_type_t lts_type_create() { return (lts_type_t)calloc(1, sizeof(lts_type_s)); }
-extern "C" int lts_type_add_type(lts_type_t, const char*, int*) { return 0;}
+extern "C" int lts_type_add_type(lts_type_t, const char*, int*) {
+    static int t = 0;
+    return t++;
+}
 extern "C" void lts_type_set_state_length(lts_type_t ctx, int length) {
     ctx->state_length = length;
 }
@@ -153,3 +165,5 @@ extern "C" void lts_type_set_edge_label_count(lts_type_t, int) {}
 extern "C" void lts_type_set_edge_label_typeno(lts_type_t, int, int) {}
 extern "C" void lts_type_set_edge_label_name(lts_type_t, int, const char*) {}
 extern "C" void lts_type_set_format(lts_type_t, int, data_format_t) {}
+
+int doPrint = 0;
