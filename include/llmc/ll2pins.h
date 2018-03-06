@@ -18,8 +18,11 @@ int ll2pins(File const& input, File const& output, MessageFormatter& out) {
     llmc::LLPinsGenerator gen(std::move(llvmModel), out);
     gen.enableDebugChecks();
 
-    gen.pinsify();
+    auto r = gen.pinsify();
+
     gen.writeTo(output.getFilePath());
+
+    if(!r) return -1;
 
     return 0;
 }

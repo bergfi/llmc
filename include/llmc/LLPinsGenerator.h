@@ -1856,7 +1856,9 @@ public:
     /**
      * @brief Starts the pinsification process.
      */
-    void pinsify() {
+    bool pinsify() {
+        bool ok = true;
+
         cleanup();
 
         pinsModule = new Module("pinsModule", ctx);
@@ -1925,11 +1927,14 @@ public:
         out.indent();
 
         if(verifyModule(*pinsModule, &roout)) {
-            out.reportFailure("Verification failed");
+            out.reportFailure("Generated LLVM module verification failed");
+            ok = false;
         } else {
             out.reportSuccess("Module OK");
         }
         out.outdent();
+
+        return ok;
     }
 
     /**
