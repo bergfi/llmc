@@ -33,18 +33,10 @@ void llmc_os_memory_init(model_t model, int data_typeno, __int32_t* ci_data, int
 
 }
 
-intptr_t llmc_os_malloc(int* data_len, char** p_data_data, int* info_len, char** info_data, int tid, intptr_t n) {
-    printf("llmc_os_malloc: %i %p %i %p %i %" PRIiPTR "\n", *data_len, *p_data_data, *info_len, *info_data, tid, n);
-    memory_info* info = (memory_info*)*info_data;
+intptr_t llmc_os_malloc(int info_len, char* info_data, int tid, intptr_t n) {
+    memory_info* info = (memory_info*)info_data;
     int at = info->start + info->size;
     info->size += n;
-
-    //char* newp = realloc(*p_data_data, info->start + info->size);
-    //assert(newp);
-    //memset(newp+at, 0, n);
-    //*p_data_data = newp;
-    *data_len = info->start + info->size;
-
     return at;
 }
 
@@ -59,3 +51,25 @@ void llmc_print_chunk(char* data, int len) {
 void llmc_hook___assert_fail(char* message, char* file, int line, char* x) {
     printf("ASSERT FAILED[%s:%i]: %s\n", file, line, message);
 }
+
+typedef struct {
+    __uint64_t key;
+    void* val;
+} list_entry;
+
+int llmc_list_find(void* list, int len, __uint64_t key, void** val) {
+    list_entry* m = (list_entry*)list;
+    list_entry* me = m + len/sizeof(list_entry);
+    while(m < me) {
+        if(m->key == key) {
+            *val = m->val;
+            return 1;
+        }
+        ++m;
+    }
+    return 0;
+}
+
+
+
+
