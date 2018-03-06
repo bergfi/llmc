@@ -7,12 +7,12 @@ void lol() {
 }
 
 int main(int argc, char** argv) {
-	int i = 5;
+//	int i = 5;
 	g++;
-	lol();
-	i += g;
-	g += i;
-	assert(g==19);
-	return i;
+//	lol();
+//	i += g;
+//	g += i;
+	assert(g==6);
+	return 0;
 }
 

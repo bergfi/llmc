@@ -44,7 +44,108 @@
     <File Name="ll2pins/main.cpp"/>
   </VirtualDirectory>
   <VirtualDirectory Name="tests">
-    <VirtualDirectory Name="correctness"/>
+    <VirtualDirectory Name="performance">
+      <VirtualDirectory Name="while_simple">
+        <File Name="tests/performance/while_simple/test.c"/>
+      </VirtualDirectory>
+    </VirtualDirectory>
+    <VirtualDirectory Name="pins">
+      <VirtualDirectory Name="chunks3_3">
+        <File Name="tests/pins/chunks3_3/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="chunks3_1">
+        <File Name="tests/pins/chunks3_1/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="chunks2_1">
+        <File Name="tests/pins/chunks2_1/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="twochunktypes">
+        <File Name="tests/pins/twochunktypes/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="chunks2_2">
+        <File Name="tests/pins/chunks2_2/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="twoints">
+        <File Name="tests/pins/twoints/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="chunks6_6">
+        <File Name="tests/pins/chunks6_6/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="chunks6_1">
+        <File Name="tests/pins/chunks6_1/test.c"/>
+      </VirtualDirectory>
+    </VirtualDirectory>
+    <VirtualDirectory Name="correctness">
+      <VirtualDirectory Name="globals_simple">
+        <File Name="tests/correctness/globals_simple/test.c"/>
+        <File Name="tests/correctness/globals_simple/explanation.txt"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="register_two">
+        <File Name="tests/correctness/register_two/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="call_retval">
+        <File Name="tests/correctness/call_retval/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="if_single">
+        <File Name="tests/correctness/if_single/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="emptymain">
+        <File Name="tests/correctness/emptymain/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="storebuffer">
+        <File Name="tests/correctness/storebuffer/storebuffer.c"/>
+        <File Name="tests/correctness/storebuffer/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="call_arguments">
+        <File Name="tests/correctness/call_arguments/outtemplol.txt"/>
+        <File Name="tests/correctness/call_arguments/errtemplol.txt"/>
+        <File Name="tests/correctness/call_arguments/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="call_plain">
+        <File Name="tests/correctness/call_plain/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="while_simple">
+        <File Name="tests/correctness/while_simple/test.c"/>
+        <File Name="tests/correctness/while_simple/lol.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="helloworld">
+        <File Name="tests/correctness/helloworld/common.c"/>
+        <File Name="tests/correctness/helloworld/common2.c"/>
+        <File Name="tests/correctness/helloworld/lolcpp"/>
+        <File Name="tests/correctness/helloworld/common_processed_nolines.c"/>
+        <File Name="tests/correctness/helloworld/helloworld.c"/>
+        <File Name="tests/correctness/helloworld/lol2"/>
+        <File Name="tests/correctness/helloworld/common_processed.c"/>
+        <File Name="tests/correctness/helloworld/aap.c"/>
+        <File Name="tests/correctness/helloworld/lol"/>
+        <File Name="tests/correctness/helloworld/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="register_simple">
+        <File Name="tests/correctness/register_simple/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="pthread_msq">
+        <File Name="tests/correctness/pthread_msq/test.cpp"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="call_return">
+        <File Name="tests/correctness/call_return/outtemplol.txt"/>
+        <File Name="tests/correctness/call_return/errtemplol.txt"/>
+        <File Name="tests/correctness/call_return/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="nidhugg_stack_unsafe">
+        <File Name="tests/correctness/nidhugg_stack_unsafe/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="pthread_simple">
+        <File Name="tests/correctness/pthread_simple/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="nidhugg_fib_bench_true_join">
+        <File Name="tests/correctness/nidhugg_fib_bench_true_join/test.c"/>
+      </VirtualDirectory>
+      <VirtualDirectory Name="pthread_dekker">
+        <File Name="tests/correctness/pthread_dekker/test.c"/>
+      </VirtualDirectory>
+      <File Name="tests/correctness/test.c"/>
+    </VirtualDirectory>
+    <File Name="tests/try.c"/>
   </VirtualDirectory>
   <VirtualDirectory Name="common">
     <File Name="common/config.h.in"/>
