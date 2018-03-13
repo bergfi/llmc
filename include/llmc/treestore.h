@@ -283,7 +283,7 @@ public:
 
     size_t* find(size_t len, void const* data) {
         size_t* e = _data+1;
-        while(e < _end) {
+        while(e < _insertAt) {
             if(*e == len) {
                 if(memcmp(e+1, data, len) == 0) {
                     return e-1;

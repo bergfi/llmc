@@ -469,6 +469,17 @@ public:
         return chunk{(unsigned int)ti._length, (char*)ti._data};
     }
 
+    virtual int pins_chunk_cam(void* ctx, int type, int idx, int offset, char* data, int len) {
+        ssgen_mt* ss = static_cast<ssgen_mt*>(ctx);
+        auto const& ti = ss->treeStore().find(type+1, idx);
+        int newLength = (size_t)(offset + len) > ti._length ? offset + len : ti._length;
+        char* copy = (char*)alloca(newLength);
+        memmove(copy, ti._data, ti._length);
+        memmove(copy+offset, data, len);
+        auto it = ss->treeStore().insert(type+1, TypeInstance(copy, newLength, true));
+        return it.first->_id;
+    }
+
 protected:
     mutex_type mtx;
     std::deque<TypeInstance const*> stateQueueNew;
