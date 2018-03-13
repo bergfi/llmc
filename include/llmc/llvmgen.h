@@ -344,6 +344,109 @@ public:
 };
 
 /**
+ * @class IRStringBuilder
+ * @author Freark van der Berg
+ * @date 04/07/17
+ * @file LLPinsGenerator.h
+ * @brief Allows one to build an LLVM string using stream operators.
+ *   IRStringBuilder irs;
+ *   irs << someString;
+ *   irs << someInt;
+ *   builder.CreateCall(pins("puts"), {irs.str()});
+ */
+template<typename LLPinsGenerator>
+class IRStringBuilder {
+public:
+
+    IRStringBuilder(LLPinsGenerator& gen, size_t max_chars)
+    : gen(gen)
+    , written(ConstantInt::get(gen.pins("snprintf")->getFunctionType()->getParamType(1), 0))
+    , max_chars(max_chars)
+    , max(ConstantInt::get(gen.pins("snprintf")->getFunctionType()->getParamType(1), max_chars))
+    {
+        out = gen.addAlloca(ArrayType::get(gen.t_int8, max_chars), gen.builder.GetInsertBlock()->getParent());
+    }
+
+    IRStringBuilder& operator<<(long long int i) {
+        Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
+        Value* remaining = gen.builder.CreateSub(max, written);
+        Value* written_here = gen.builder.CreateCall( gen.pins("snprintf")
+                                                    , {write_at
+                                                      , remaining
+                                                      , gen.generateGlobalString("%i")
+                                                      , ConstantInt::get(gen.t_int, i)
+                                                      }
+                                                    );
+        auto wh = gen.builder.CreateIntCast( written_here
+                                           , gen.pins("snprintf")->getFunctionType()->getParamType(1)
+                                           , false
+                                           );
+        written = gen.builder.CreateAdd(written, wh);
+        return *this;
+    }
+    IRStringBuilder& operator<<(const char* c) {
+        *this << std::string(c);
+        return *this;
+    }
+    IRStringBuilder& operator<<(std::string s) {
+        Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
+        Value* remaining = gen.builder.CreateSub(max, written);
+        Value* written_here = gen.builder.CreateCall( gen.pins("snprintf")
+                                                    , { write_at
+                                                      , remaining
+                                                      , gen.generateGlobalString("%s")
+                                                      , gen.generateGlobalString(s)
+                                                      }
+                                                    );
+        auto wh = gen.builder.CreateIntCast( written_here
+                                           , gen.pins("snprintf")->getFunctionType()->getParamType(1)
+                                           , false
+                                           );
+        written = gen.builder.CreateAdd(written, wh);
+        return *this;
+    }
+
+    IRStringBuilder& operator<<(Value* value) {
+        Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
+        Value* remaining = gen.builder.CreateSub(max, written);
+        Value* written_here = nullptr;
+        if(value->getType()->isIntegerTy()) {
+            value = gen.builder.CreateIntCast(value, gen.t_int, true);
+            written_here = gen.builder.CreateCall(gen.pins("snprintf")
+                                                 , { write_at
+                                                   , remaining
+                                                   , gen.generateGlobalString("%i")
+                                                   , value
+                                                   }
+                                                );
+        } else {
+            assert(0 && "non supported value for printing");
+        }
+        auto wh = gen.builder.CreateIntCast( written_here
+                                           , gen.pins("snprintf")->getFunctionType()->getParamType(1)
+                                           , false
+                                           );
+        written = gen.builder.CreateAdd(written, wh);
+        return *this;
+    }
+
+    Value* str() {
+        return gen.builder.CreateGEP( out
+                                    , { ConstantInt::get(gen.t_int,0,true)
+                                      , ConstantInt::get(gen.t_int,0,true)
+                                      }
+                                    );
+    }
+
+private:
+    LLPinsGenerator& gen;
+    Value* written;
+    size_t max_chars;
+    Value* max;
+    Value* out;
+};
+
+/**
  * @brief Places a branch to a new BasicBlock as a comment
  * @param comment The name of the BB that serves as a comment
  */

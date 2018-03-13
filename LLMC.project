@@ -18,6 +18,13 @@
   </Reconciliation>
   <VirtualDirectory Name="include">
     <VirtualDirectory Name="llmc">
+      <VirtualDirectory Name="generation">
+        <File Name="include/llmc/generation/LLVMLTSType.h"/>
+        <File Name="include/llmc/generation/ProcessStack.h"/>
+        <File Name="include/llmc/generation/TransitionGroups.h"/>
+        <File Name="include/llmc/generation/ChunkMapper.h"/>
+        <File Name="include/llmc/generation/GenerationContext.h"/>
+      </VirtualDirectory>
       <File Name="include/llmc/bcloader.h"/>
       <File Name="include/llmc/llmc.h"/>
       <File Name="include/llmc/llmodel.h"/>
@@ -162,6 +169,13 @@
     <File Name="llmc/ssgen.cpp"/>
   </VirtualDirectory>
   <VirtualDirectory Name="libllmc">
+    <VirtualDirectory Name="generation">
+      <File Name="libllmc/generation/LLVMLTS.cpp"/>
+      <File Name="libllmc/generation/ChunkMapper.cpp"/>
+      <File Name="libllmc/generation/GenerationContext.cpp"/>
+      <File Name="libllmc/generation/TransitionGroups.cpp"/>
+      <File Name="libllmc/generation/ProcessStack.cpp"/>
+    </VirtualDirectory>
     <File Name="libllmc/CMakeLists.txt"/>
     <File Name="libllmc/LLPinsGenerator.cpp"/>
     <File Name="libllmc/llvmgen.cpp"/>

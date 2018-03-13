@@ -10,34 +10,20 @@ typedef struct {
     __int64_t start;
 } __attribute((packed)) memory_info;
 
-void llmc_os_memory_init(model_t model, int data_typeno, __int32_t* ci_data, int info_typeno, __int32_t* ci_info) {
-    printf("llmc_os_memory_init: %p %i %p %i %p\n", model, data_typeno, ci_data, info_typeno, ci_info);
-    chunk c_info;
+void llmc_os_memory_init(model_t model, int data_typeno, __int32_t* ci_data) {
+    printf("llmc_os_memory_init: %p %i %p\n", model, data_typeno, ci_data);
     chunk c_data;
-    memory_info info;
 
-    info.size = 0;
-    info.start = 16;
+    const int START_BYTES = 8;
 
-    c_info.len = sizeof(memory_info);
-    c_info.data = (void*)&info;
-    *ci_info = pins_chunk_put(model, info_typeno, c_info);
+    char a[START_BYTES];
 
-    char a[info.start];
+    memset(a, 0, START_BYTES);
 
-    memset(a, 0, info.start);
-
-    c_data.len = info.start;
+    c_data.len = START_BYTES;
     c_data.data = a;
     *ci_data = pins_chunk_put(model, data_typeno, c_data);
 
-}
-
-intptr_t llmc_os_malloc(int info_len, char* info_data, int tid, intptr_t n) {
-    memory_info* info = (memory_info*)info_data;
-    int at = info->start + info->size;
-    info->size += n;
-    return at;
 }
 
 void llmc_print_chunk(char* data, int len) {

@@ -21,6 +21,12 @@
 #include <ltsmin/pins.h>
 #include <ltsmin/pins-util.h>
 
+#include <llmc/generation/ChunkMapper.h>
+#include <llmc/generation/GenerationContext.h>
+#include <llmc/generation/LLVMLTSType.h>
+#include <llmc/generation/ProcessStack.h>
+#include <llmc/generation/TransitionGroups.h>
+
 #include "llvmgen.h"
 
 extern "C" {
@@ -30,196 +36,6 @@ extern "C" {
 using namespace llvm;
 
 namespace llmc {
-
-/**
- * @class TransitionGroup
- * @author Freark van der Berg
- * @date 04/07/17
- * @file LLPinsGenerator.h
- * @brief Describes a single transition group.
- * Serves as a base class for @c TransitionGroupInstruction
- * and @c TransitionGroupLambda.
- */
-class TransitionGroup {
-public:
-    enum class Type {
-        Instruction,
-        Lambda
-    };
-
-    TransitionGroup()
-    : nextState(nullptr)
-    {
-    }
-
-
-    Type getType() const {
-        return type;
-    }
-
-    void setDesc(std::string s) {
-        desc = std::move(s);
-    }
-
-protected:
-    Type type;
-private:
-    BasicBlock* nextState;
-    std::string desc;
-    friend class LLPinsGenerator;
-};
-
-/**
- * @class TransitionGroupInstruction
- * @author Freark van der Berg
- * @date 04/07/17
- * @file LLPinsGenerator.h
- * @brief Describes the transition of a single instruction.
- */
-class TransitionGroupInstruction: public TransitionGroup {
-public:
-    TransitionGroupInstruction( int thread_id
-                              , Instruction* srcPC
-                              , Instruction* dstPC
-                              , std::vector<llvm::Value*> conditions
-                              , std::vector<Instruction*> actions
-                              )
-    : thread_id(thread_id)
-    , srcPC(srcPC)
-    , dstPC(dstPC)
-    , conditions(std::move(conditions))
-    , actions(std::move(actions))
-    {
-        type = TransitionGroup::Type::Instruction;
-    }
-private:
-
-    int thread_id;
-
-    /**
-     * The instruction that this transition groups describes. It serves both
-     * as the instruction that is executed and the instruction of the source
-     * program counter.
-     */
-    Instruction* srcPC;
-
-    /**
-     * The instruction that describes the destination program counter. In other
-     * words: after this transition, the PC should be set to dstPC. Even in the
-     * case of a call instruction, because this is the PC to return to.
-     */
-    Instruction* dstPC;
-
-    /**
-     * Extra conditions of type i1 that need to hold.
-     */
-    std::vector<llvm::Value*> conditions;
-
-    /**
-     * Extra instructions that are executed AFTER srcPC.
-     */
-    std::vector<Instruction*> actions;
-
-    friend class LLPinsGenerator;
-};
-
-class LLPinsGenerator;
-
-/**
- * @class GenerationContext
- * @author Freark van der Berg
- * @date 04/07/17
- * @file LLPinsGenerator.h
- * @brief Describes the current context while generating LLVM IR.
- * It remembers various details through the generation of a single transition
- * group.
- */
-class GenerationContext {
-public:
-
-    /**
-     * The generator instance
-     */
-    LLPinsGenerator* gen;
-
-    /**
-     * The LTSmin model
-     */
-    Value* model;
-
-    /**
-     * Pointer to the read-only state-vector of the incoming state
-     */
-    Value* src;
-
-    /**
-     * Pointer to the state-vector that will be reported to LTSmin
-     */
-    Value* svout;
-
-    /**
-     * Pointer to the edgle label array that will be reported to LTSmin
-     */
-    Value* edgeLabelValue;
-
-    /**
-     * Map from an edge label to the value of an edge label
-     * Use this to specify the edge label of a transition.
-     */
-    std::unordered_map<std::string, Value*> edgeLabels;
-
-    /**
-     * The current thread_id
-     */
-    int thread_id;
-
-    /**
-     * Whether the transition group changed the PC
-     */
-    bool alteredPC;
-
-    Value* cb;
-    Value* userContext;
-
-    GenerationContext()
-    :   gen(nullptr)
-    ,   model(nullptr)
-    ,   src(nullptr)
-    ,   svout(nullptr)
-    ,   edgeLabelValue(nullptr)
-    ,   edgeLabels()
-    ,   thread_id(0)
-    ,   alteredPC(false)
-    ,   cb(nullptr)
-    ,   userContext(nullptr)
-    {
-    }
-};
-
-/**
- * @class TransitionGroupLambda
- * @author Freark van der Berg
- * @date 04/07/17
- * @file LLPinsGenerator.h
- * @brief A transition group that is described solely by the lambda inside
- */
-class TransitionGroupLambda: public TransitionGroup {
-public:
-    template<typename T>
-    TransitionGroupLambda(T&& lambda)
-    {
-        type = TransitionGroup::Type::Lambda;
-        f = lambda;
-    }
-
-    void execute(GenerationContext* gctx) {
-        f(gctx, this);
-    }
-
-private:
-    std::function<void(GenerationContext*, TransitionGroupLambda*)> f;
-    friend class LLPinsGenerator;
-};
 
 /**
  * @class FunctionData
@@ -260,1333 +76,6 @@ public:
     friend class ProcessStack;
 
     /**
-     * @class IRStringBuilder
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief Allows one to build an LLVM string using stream operators.
-     *   IRStringBuilder irs;
-     *   irs << someString;
-     *   irs << someInt;
-     *   builder.CreateCall(pins("puts"), {irs.str()});
-     */
-    class IRStringBuilder {
-    public:
-
-        IRStringBuilder(LLPinsGenerator& gen, size_t max_chars)
-        : gen(gen)
-        , written(ConstantInt::get(gen.pins("snprintf")->getFunctionType()->getParamType(1), 0))
-        , max_chars(max_chars)
-        , max(ConstantInt::get(gen.pins("snprintf")->getFunctionType()->getParamType(1), max_chars))
-        {
-            out = addAlloca(ArrayType::get(gen.t_int8, max_chars), gen.builder.GetInsertBlock()->getParent());
-        }
-
-        IRStringBuilder& operator<<(long long int i) {
-            Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
-            Value* remaining = gen.builder.CreateSub(max, written);
-            Value* written_here = gen.builder.CreateCall( gen.pins("snprintf")
-                                                        , {write_at
-                                                          , remaining
-                                                          , gen.generateGlobalString("%i")
-                                                          , ConstantInt::get(gen.t_int, i)
-                                                          }
-                                                        );
-            auto wh = gen.builder.CreateIntCast( written_here
-                                               , gen.pins("snprintf")->getFunctionType()->getParamType(1)
-                                               , false
-                                               );
-            written = gen.builder.CreateAdd(written, wh);
-            return *this;
-        }
-        IRStringBuilder& operator<<(const char* c) {
-            *this << std::string(c);
-            return *this;
-        }
-        IRStringBuilder& operator<<(std::string s) {
-            Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
-            Value* remaining = gen.builder.CreateSub(max, written);
-            Value* written_here = gen.builder.CreateCall( gen.pins("snprintf")
-                                                        , { write_at
-                                                          , remaining
-                                                          , gen.generateGlobalString("%s")
-                                                          , gen.generateGlobalString(s)
-                                                          }
-                                                        );
-            auto wh = gen.builder.CreateIntCast( written_here
-                                               , gen.pins("snprintf")->getFunctionType()->getParamType(1)
-                                               , false
-                                               );
-            written = gen.builder.CreateAdd(written, wh);
-            return *this;
-        }
-
-        IRStringBuilder& operator<<(Value* value) {
-            Value* write_at = gen.builder.CreateGEP(out, {ConstantInt::get(gen.t_int, 0), written});
-            Value* remaining = gen.builder.CreateSub(max, written);
-            Value* written_here = nullptr;
-            if(value->getType()->isIntegerTy()) {
-                value = gen.builder.CreateIntCast(value, gen.t_int, true);
-                written_here = gen.builder.CreateCall(gen.pins("snprintf")
-                                                     , { write_at
-                                                       , remaining
-                                                       , gen.generateGlobalString("%i")
-                                                       , value
-                                                       }
-                                                    );
-            } else {
-                assert(0 && "non supported value for printing");
-            }
-            auto wh = gen.builder.CreateIntCast( written_here
-                                               , gen.pins("snprintf")->getFunctionType()->getParamType(1)
-                                               , false
-                                               );
-            written = gen.builder.CreateAdd(written, wh);
-            return *this;
-        }
-
-        Value* str() {
-            return gen.builder.CreateGEP( out
-                                        , { ConstantInt::get(gen.t_int,0,true)
-                                          , ConstantInt::get(gen.t_int,0,true)
-                                          }
-                                        );
-        }
-
-    private:
-        LLPinsGenerator& gen;
-        Value* written;
-        size_t max_chars;
-        Value* max;
-        Value* out;
-    };
-
-    /**
-     * @class SVType
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief A type in the tree of SVTree nodes.
-     * @see SVTree
-     */
-    class SVType {
-    public:
-        SVType(std::string name, data_format_t ltsminType, Type* llvmType, LLPinsGenerator* gen)
-        : _name(std::move(name))
-        , _ltsminType(std::move(ltsminType))
-        , _llvmType(llvmType)
-        {
-
-            // Determine if the LLVM Type fits perfectly in a number of state
-            // vector slots.
-            auto& DL = gen->pinsModule->getDataLayout();
-            assert(_llvmType->isSized() && "type is not sized");
-            auto bytesNeeded = DL.getTypeSizeInBits(_llvmType) / 8;
-            assert(bytesNeeded > 0 && "size is 0");
-
-            // If it does not, enlarge the type so that it does, but remember
-            // the actual type that this SVType should represent
-            if(bytesNeeded & 0x3) {
-                _PaddedLLVMType = ArrayType::get( IntegerType::get(_llvmType->getContext(), 32)
-                                                , (bytesNeeded + 3) / 4
-                                                );
-            } else {
-                _PaddedLLVMType = _llvmType;
-            }
-        }
-
-        /**
-         * @brief Request the LLVMType of this SVType.
-         * @return The LLVM Type of this SVType
-         */
-        Type* getLLVMType() {
-            return _PaddedLLVMType;
-        }
-
-        /**
-         * @brief Request the real LLVMType of this SVType.
-         * The different with @c getLLVMType() is that in the event the type
-         * does not perfectly fit a number of state slots, the type in the
-         * SV can differ from the real type, because padding is added to
-         * make it fit.
-         * @return The real LLVM Type of this SVType
-         */
-        Type* getRealLLVMType() {
-            return _llvmType;
-        }
-    public:
-        std::string _name;
-        data_format_t _ltsminType;
-        int index;
-    private:
-        Type* _llvmType;
-        Type* _PaddedLLVMType;
-    };
-
-    /**
-     * @class SVTree
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief The State-Vector Tree nodes are the way to describe a state-vector.
-     * Use this to describe the layout of a flattened tree-like structure and
-     * gain easy access methods to the data.
-     */
-    class SVTree {
-    protected:
-
-        SVTree( LLPinsGenerator* gen
-              , std::string name = ""
-              , SVType* type = nullptr
-              , SVTree* parent = nullptr
-              , int index = 0
-              )
-        :   _gen(gen)
-        ,   name(std::move(name))
-        ,   typeName(std::move(typeName))
-        ,   parent(std::move(parent))
-        ,   index(std::move(index))
-        ,   type(type)
-        ,   llvmType(nullptr)
-        {
-        }
-
-        LLPinsGenerator* gen() {
-            SVTree* p = parent;
-            while(!_gen && p) {
-                _gen = p->_gen;
-                p = p->parent;
-            }
-            return _gen;
-        }
-
-    public:
-
-        SVTree() {
-            assert(0);
-        }
-
-        /**
-         * @brief Creates a new SVTree node with the specified type.
-         * This should be used for leaves.
-         * @todo possibly create SVLeaf type
-         * @param name The name of the state-vector variable
-         * @param type The type of the state-vector variable
-         * @param parent The parent SVTree node
-         * @return
-         */
-        SVTree(std::string name, SVType* type = nullptr, SVTree* parent = nullptr)
-        :   _gen(nullptr)
-        ,   name(std::move(name))
-        ,   typeName(std::move(typeName))
-        ,   parent(std::move(parent))
-        ,   index(0)
-        ,   type(type)
-        ,   llvmType(nullptr)
-        {
-        }
-
-        /**
-         * @brief Creates a new SVTree node with the specified type.
-         * This should be used for non-leaves.
-         * @todo possibly create SVLeaf type
-         * @param name The name of the state-vector variable
-         * @param type The name to give the LLVM type that is the result of the
-         *             list of types of the children of this node
-         * @param parent The parent SVTree node
-         * @return
-         */
-        SVTree(std::string name, std::string typeName, SVType* type = nullptr, SVTree* parent = nullptr)
-        :   _gen(nullptr)
-        ,   name(std::move(name))
-        ,   typeName(std::move(typeName))
-        ,   parent(std::move(parent))
-        ,   index(0)
-        ,   type(type)
-        ,   llvmType(nullptr)
-        {
-        }
-
-        /**
-         * @brief Deletes this node and its children.
-         */
-        ~SVTree() {
-            for(auto& c: children) {
-                delete c;
-            }
-        }
-
-        /**
-         * @brief Accesses the child with the specified name
-         * @param name The name of the child to access.
-         * @return The SVTree child node with the specified name.
-         */
-        SVTree& operator[](std::string name) {
-            for(auto& c: children) {
-                if(c->getName() == name) {
-                    return *c;
-                }
-            }
-            assert(0);
-            auto i = children.size();
-            children.push_back(new SVTree(gen(), name, nullptr, this, i));
-            return *children[i];
-        }
-
-        /**
-         * @brief Accesses the child at the specified index
-         * @param i The index of the child to access.
-         * @return The SVTree child node at the specified index.
-         */
-        SVTree& operator[](size_t i) {
-            if(i >= children.size()) {
-                assert(0);
-                children.resize(i+1);
-                children[i] = new SVTree(gen(), name, nullptr, this, i);
-            }
-            return *children[i];
-        }
-
-        /**
-         * @brief Adds a copy of the node @c t as child
-         * @param t The node to copy and add.
-         * @return A reference to this node
-         */
-        SVTree& operator<<(SVTree t) {
-            *this << new SVTree(std::move(t));
-            return *this;
-        }
-
-        /**
-         * @brief Adds the node @c t as child
-         * Claims the ownership over @c t.
-         * @param t The node to add.
-         * @return A reference to this node
-         */
-        SVTree& operator<<(SVTree* t) {
-            for(auto& c: children) {
-                if(c->getName() == name) {
-                    std::cout << "Duplicate member: " << name << std::endl;
-                    assert(0);
-                    return *this;
-                }
-            }
-            auto i = children.size();
-            t->index = i;
-            t->parent = this;
-            children.push_back(t);
-            return *this;
-        }
-
-        std::string const& getName() const {
-            return name;
-        }
-
-        std::string getFullName() {
-            if(parent) {
-                std::string pname = parent->getFullName();
-                if(name == "") {
-                    std::stringstream ss;
-                    ss << pname << "[" << getIndex() << "]";
-                    return ss.str();
-                } else if(pname == "") {
-                    return name;
-                } else {
-                    return pname + "_" + name;
-                }
-            } else {
-                return "";
-            }
-        }
-
-        std::string const& getTypeName() const {
-            return name;
-        }
-
-        /**
-         * @brief Returns the index at which this node is at in the list
-         * of nodes of the parent node.
-         * @return The index of this node.
-         */
-        int getIndex() const { return index; }
-        SVTree* getParent() const { return parent; }
-
-        /**
-         * @brief Returns a pointer to the location of this node in the
-         * state-vector, based on the specified @c rootValue
-         * @param rootValue The root Value of the state-vector
-         * @return A pointer to the location of this node in the state-vector
-         */
-        Value* getValue(Value* rootValue) {
-            std::vector<Value*> indices;
-            std::string name = "p";
-            SVTree* p = this;
-
-            // Collect all indices to know how to access this variable from
-            // the outer structure
-            while(p) {
-                indices.push_back(ConstantInt::get(gen()->t_int, p->index));
-                name = p->name + "_" + name;
-                p = p->parent;
-            }
-
-            // Reverse the list so it goes from outer to inner
-            std::reverse(indices.begin(), indices.end());
-
-            // Assert we have a parent or our index is 0
-            assert(parent || index == 0);
-
-            // Create the GEP
-            auto v = gen()->builder.CreateGEP(rootValue, ArrayRef<Value*>(indices));
-
-            // If the real LLVM Type is different from the LLVM Type in the SV,
-            // perform a pointer cast, so that the generated code actually uses
-            // the real LLVM Type it expects instead of the LLVM Type in the SV.
-            // These can differ in the event the type does not fit a number of
-            // slots perfectly, thus padding is required.
-            if(type && type->getLLVMType() != type->getRealLLVMType()) {
-                v = gen()->builder.CreatePointerCast(v, PointerType::get(type->getRealLLVMType(), 0), name);
-            } else {
-                v->setName(name);
-            }
-            return v;
-        }
-
-        Value* getLoadedValue(Value* rootValue) {
-            std::vector<Value*> indices;
-            std::string name = "L";
-            SVTree* p = this;
-
-            // Collect all indices to know how to access this variable from
-            // the outer structure
-            while(p) {
-                indices.push_back(ConstantInt::get(gen()->t_int, p->index));
-                name = p->name + "_" + name;
-                p = p->parent;
-            }
-
-            // Reverse the list so it goes from outer to inner
-            std::reverse(indices.begin(), indices.end());
-
-            // Assert we have a parent or our index is 0
-            assert(parent || index == 0);
-
-            return gen()->builder.CreateLoad( gen()->builder.CreateGEP( rootValue
-                                                                      , ArrayRef<Value*>(indices)
-                                                                      )
-                                            , name
-                                            );
-        }
-
-        /**
-         * @brief Returns the number of bytes the variable described by this
-         * SVTree node needs in the state-vector.
-         * @return The number of bytes needed for the variable.
-         */
-        Constant* getSizeValue() {
-            return gen()->generateSizeOf(getLLVMType());
-        }
-
-        /**
-         * @brief Returns the number of state-vector slots the variable
-         * described by this SVTree node needs in the state-vector.
-         * @return The number of state-vector slots needed for the variable.
-         */
-        Constant* getSizeValueInSlots() {
-            return ConstantExpr::getUDiv(getSizeValue(), ConstantInt::get(gen()->t_int, 4, true));
-        }
-
-        SVType* getType() {
-            return type;
-        }
-
-        Type* getLLVMType() {
-            if(type && type->getLLVMType()) {
-                return type->getLLVMType();
-            } else if(llvmType) {
-                return llvmType;
-            } else {
-                std::vector<Type*> types;
-                for(auto& c: children) {
-                    types.push_back(c->getLLVMType());
-                }
-                auto type_name = typeName;
-                if(!parent) type_name += "_root";
-                llvmType = StructType::create(gen()->ctx, types, type_name);
-                return llvmType;
-            }
-        }
-
-        bool isEmpty() {
-            return children.size() == 0 && !type;
-        }
-
-        bool verify() {
-            bool r = true;
-            for(int i = 0; (size_t)i < children.size(); ++i) {
-                auto& c = children[i];
-                assert(c->getIndex() == i);
-                assert(c->getParent() == this);
-                if(!c->verify()) r = false;
-            }
-            if(name.empty()) {
-                gen()->out.reportFailure("Node without a name");
-                gen()->out.indent();
-                if(getType()) {
-                    gen()->out.reportNote("Type: " + getType()->_name);
-                }
-                if(!typeName.empty()) {
-                    gen()->out.reportNote("TypeName: " + typeName);
-                }
-                gen()->out.outdent();
-            } else if(!getType()) {
-                gen()->out.reportFailure("Type is not set: " + name);
-                //std::cout <<  << name << std::endl;
-                //assert(0);
-                r = false;
-            }
-            assert(gen());
-            return r;
-        }
-
-        /**
-         * @brief Executes @c f for every leaf in the tree.
-         */
-        template<typename FUNCTION>
-        void executeLeaves(FUNCTION &&f) {
-            for(auto& c: children) {
-                c->executeLeaves(std::forward<FUNCTION>(f));
-            }
-            if(children.size() == 0) {
-                f(this);
-            }
-        }
-
-        size_t count() const {
-            return children.size();
-        }
-
-        std::vector<SVTree*>& getChildren() {
-            return children;
-        }
-
-    protected:
-        LLPinsGenerator* _gen;
-        std::string name;
-        std::string typeName;
-        SVTree* parent;
-        int index;
-
-        SVType* type;
-        Type* llvmType;
-        std::vector<SVTree*> children;
-
-        friend class LLVMLTS;
-
-    };
-
-    /**
-     * @class VarRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief An SVTree node describing the root of a tree.
-     */
-    class VarRoot: public SVTree {
-    public:
-        VarRoot(LLPinsGenerator* gen, std::string name)
-        :   SVTree(std::move(gen), name)
-        {
-        }
-    };
-
-    /**
-     * @class SVRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief A root node describing a state-vector
-     */
-    class SVRoot: public VarRoot {
-        using VarRoot::VarRoot;
-    };
-
-    /**
-     * @class SVRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief A root node describing a label array
-     */
-    class SVLabelRoot: public VarRoot {
-        using VarRoot::VarRoot;
-    };
-
-    /**
-     * @class SVRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief A root node describing an edge label array
-     */
-    class SVEdgeLabelRoot: public VarRoot {
-        using VarRoot::VarRoot;
-    };
-
-    /**
-     * @class SVRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief An SVTree node describing a label
-     */
-    class SVLabel: public SVTree {
-    };
-
-    /**
-     * @class SVRoot
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief An SVTree node describing an edge label
-     */
-    class SVEdgeLabel: public SVTree {
-    };
-
-    /**
-     * @class ChunkMapper
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief Maps chunkIDs to chunks.
-     * Allows easy acces to the chunk system of LTSmin. Construction does not
-     * cost anything at runtime.
-     */
-    class ChunkMapper {
-    private:
-        LLPinsGenerator& gen;
-        Value* model;
-        SVType* type;
-        int idx;
-
-        void init() {
-            int index = 0;
-            for(auto& t: gen.lts.getTypes()) {
-                if(t->_name == type->_name) {
-                    idx = index;
-                    break;
-                }
-                index++;
-            }
-        }
-    public:
-
-        /**
-         * @brief Constructs a chunk mapper and initializes it.
-         * This does not cost any runtime performance.
-         * @param gen LLPinsGenerator
-         * @param model The LTSmin model
-         * @param type The type to use for the chunk mapping.
-         */
-        ChunkMapper(LLPinsGenerator& gen, Value* model, SVType* type)
-        : gen(gen)
-        , model(model)
-        , type(type)
-        , idx(-1)
-        {
-            assert(type->_ltsminType == LTStypeChunk);
-            init();
-        }
-
-        /**
-         * @brief Returns a read-only chunk reference.
-         * @param chunkid The chunkID of the chunk to return
-         * @return Read-only chunk reference
-         */
-        Value* generateGet(Value* chunkid) {
-            if(chunkid->getType()->isPointerTy()) {
-                chunkid = gen.builder.CreateLoad(chunkid);
-            }
-            if(!chunkid->getType()->isIntegerTy()) {
-
-                // Undefined reference since LLVM 5
-//                if(auto* I = dyn_cast<Instruction>(chunkid)) {
-//                    I->getParent()->dump();
-//                } else {
-//                    chunkid->dump();
-//                }
-                assert(0);
-            }
-            return gen.builder.CreateCall( gen.pins("pins_chunk_get")
-                                         , {model, ConstantInt::get(gen.t_int, idx), chunkid}
-                                         , "chunk." + type->_name
-                                         );
-        }
-
-        /**
-         * @brief Generates the LLVM IR to upload a chunk to LTSmin.
-         * @param chunk The chunk to upload
-         * @return The chunkID now associated with the uploaded chunk
-         */
-        Value* generatePut(Value* chunk) {
-            if(chunk->getType()->isPointerTy()) {
-                chunk = gen.builder.CreateLoad(chunk);
-                assert(0 && "this should not work");
-            }
-            assert(chunk->getType() == gen.t_chunk);
-            return gen.builder.CreateCall( gen.pins("pins_chunk_put")
-                                         , {model, ConstantInt::get(gen.t_int, idx), chunk}
-                                         , "chunkid." + type->_name
-                                         );
-
-            auto d = gen.generateChunkGetData(chunk);
-            auto s = gen.generateChunkGetLen(chunk);
-            auto s2 = gen.builder.CreateIntCast( s
-                                         , gen.pins("malloc")->getFunctionType()->getParamType(0)
-                                         , false
-                                         );
-            Value* newmem = gen.builder.CreateCall(gen.pins("malloc"), gen.builder.CreateAdd(s2, ConstantInt::get(gen.t_int64, 4)));
-            Value* newmemdata = gen.generatePointerAdd(newmem, ConstantInt::get(gen.t_int, 4));
-
-            gen.builder.CreateMemCpy(newmemdata, d, s2, newmemdata->getPointerAlignment(gen.pinsModule->getDataLayout()));
-            gen.builder.CreateStore(ConstantInt::get(gen.t_int, 0x10101010), gen.builder.CreatePointerCast(newmem, gen.t_intp));
-
-            Value* chunk2 = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), s, {0});
-            chunk2 = gen.builder.CreateInsertValue(chunk, newmemdata, {1});
-
-//            gen.builder.CreateCall( gen.pins("printf")
-//                                  , {gen.generateGlobalString("CHUNK[" + type->_name + "] put of %i bytes:")
-//                                    , s
-//                                    }
-//                                  );
-//            gen.builder.CreateCall(gen.pins("llmc_print_chunk"), {newmemdata, s});
-//            gen.builder.CreateCall(gen.pins("printf"), {gen.generateGlobalString("\n")});
-
-            auto res = gen.builder.CreateCall( gen.pins("pins_chunk_put")
-                                         , {model, ConstantInt::get(gen.t_int, idx), chunk2}
-                                         , "chunkid." + type->_name
-                                         );
-            gen.builder.CreateCall(gen.pins("free"), newmem);
-            return res;
-        }
-
-        /**
-         * @brief Generates the LLVM IR to upload a chunk to LTSmin.
-         * @param len The length of the chunk to upload
-         * @param data The data of the chunk to upload
-         * @return The chunkID now associated with the uploaded chunk
-         */
-        Value* generatePut(Value* len, Value* data) {
-            len = gen.builder.CreateIntCast(len, gen.t_chunk->getElementType(0), false);
-            data = gen.builder.CreatePointerCast(data, gen.t_chunk->getElementType(1));
-            Value* chunk = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), len, {0});
-            chunk = gen.builder.CreateInsertValue(chunk, data, {1});
-//            return gen.builder.CreateCall( gen.pins("pins_chunk_put")
-//                                         , {model, ConstantInt::get(gen.t_int, idx), chunk}
-//                                         , "chunkid." + type->_name
-//                                         );
-            return generatePut(chunk);
-        }
-
-        /**
-         * @brief Generates the LLVM IR to upload a chunk to LTSmin.
-         * @param len The length of the chunk to upload
-         * @param data The data of the chunk to upload
-         * @param chunkID the chunkID to associate to the specified chunk
-         *
-         * NOTE: this can only be used at initialization time, NOT
-         * at model-checking time.
-         *
-         * @todo make check for that
-         *
-         * @return The chunkID associated with the uploaded chunk
-         */
-        Value* generatePutAt(Value* len, Value* data, int chunkID) {
-            assert(isa<IntegerType>(len->getType()));
-            assert(isa<PointerType>(data->getType()));
-            len = gen.builder.CreateIntCast(len, gen.t_chunk->getElementType(0), false);
-            data = gen.builder.CreatePointerCast(data, gen.t_chunk->getElementType(1));
-            Value* chunk = gen.builder.CreateInsertValue(UndefValue::get(gen.t_chunk), len, {0});
-            chunk = gen.builder.CreateInsertValue(chunk, data, {1});
-//            gen.builder.CreateCall( gen.pins("printf")
-//                                  , { gen.generateGlobalString("CHUNK[" + type->_name + "] put of %i bytes:")
-//                                    , len
-//                                    }
-//                                  );
-//            gen.builder.CreateCall(gen.pins("llmc_print_chunk"), {data, len});
-//            gen.builder.CreateCall(gen.pins("printf"), {gen.generateGlobalString("\n")});
-            auto vChunkID = ConstantInt::get(gen.t_int, chunkID);
-            gen.builder.CreateCall( gen.pins("pins_chunk_put_at")
-                                  , {model, ConstantInt::get(gen.t_int, idx)
-                                    , chunk, vChunkID
-                                    }
-                                  );
-            return vChunkID;
-        }
-
-        /**
-         * @brief Gets the chunk specified by @c chunkid and copies it.
-         * The copy is done by @c memcpy into a char array alloca'd on the stack.
-         * The array Value is returned and the size of the array Value is assigned to @c ch_len.
-         * @param chunkid The chunkid of the chunk to get
-         * @param ch_len To which the Size of the chunk will be assigned
-         * @return Copied chunk
-         */
-        Value* generateGetAndCopy(Value* chunkid, Value*& ch_len) {
-            Value* ch = generateGet(chunkid);
-            Value* ch_data = gen.generateChunkGetData(ch);
-            ch_len = gen.generateChunkGetLen(ch);
-            auto copy = gen.builder.CreateAlloca(gen.t_int8, ch_len);
-            gen.builder.CreateMemCpy( copy
-                                    , ch_data
-                                    , ch_len
-                                    , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
-                                    );
-//            gen.builder.CreateCall( gen.pins("printf")
-//                                  , {gen.generateGlobalString("CHUNK[" + type->_name + "] get of %i bytes:")
-//                                    , ch_len
-//                                    }
-//                                  );
-//            gen.builder.CreateCall(gen.pins("llmc_print_chunk"), {ch_data, ch_len});
-//            gen.builder.CreateCall(gen.pins("printf"), {gen.generateGlobalString("\n")});
-            return copy;
-        }
-
-        /**
-         * @brief Clones the chunk specified by @c chunkid, with the specified delta.
-         * The delta is specified by @c offset, @c data, and @c len, where
-         * @c offset and @c len denote where the clone will differ and @c data
-         * denotes how the clone will differ.
-         *
-         *                v------- offset
-         *  Original: --------------------
-         *                <-len-->
-         *  Data:         xxxxxxxx
-         *
-         *  Clone:    ----xxxxxxxx--------
-         *
-         *                                    v------- offset
-         *  Original: --------------------
-         *                                    <-len-->
-         *  Data:                             xxxxxxxx
-         *
-         *  Clone:    --------------------0000xxxxxxxx
-         *
-         * @param chunkid The chunkID of the chunk to clone
-         * @param offset Where the data is to be written in the clone
-         * @param data Data to overwrite the clone with
-         * @param len Length of @c data
-         * @return ChunkID of the cloned chunk
-         */
-        Value* generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len, Value*& newLength) {
-            //assert(0 && "unknown if the CAM version works");
-            if(chunkid->getType()->isPointerTy()) {
-                chunkid = gen.builder.CreateLoad(chunkid);
-            }
-            newLength = gen.builder.CreateAdd(gen.builder.CreateIntCast(offset, gen.t_int, false), gen.builder.CreateIntCast(len, gen.t_int, false));
-            auto cmp = gen.builder.CreateICmpUGE(newLength, len);
-            newLength = gen.builder.CreateSelect(cmp, newLength, len);
-            auto f = gen.pins("pins_chunk_cam");
-            return gen.builder.CreateCall( f
-                                         , { model
-                                           , ConstantInt::get(gen.t_int, idx)
-                                           , gen.builder.CreateIntCast(chunkid, f->getFunctionType()->getParamType(2), false)
-                                           , gen.builder.CreateIntCast(offset, f->getFunctionType()->getParamType(3), false)
-                                           , gen.builder.CreatePointerCast(data, f->getFunctionType()->getParamType(4))
-                                           , gen.builder.CreateIntCast(len, f->getFunctionType()->getParamType(5), false)
-                                           }
-                                         , "chunkid." + type->_name
-                                         );
-        }
-
-        // Optimization idea:
-        // since the stack is only appended to, when something is popped, we can optimize determining the
-        // chunkID the naive way is to just use put_chunk by passing a pointer to the current data, but with a
-        // shorter length. Then the sha is determined again. Other approach is to remember the chunkID of the
-        // previous stack chunkID. So:
-        // stack: y -> [stackChunkID x][frameChunkID 0][frameChunkID 1] ... [frameChunkID n]
-        // then a push happens:
-        // stack: z -> [stackChunkID y][frameChunkID 0][frameChunkID 1] ... [frameChunkID n][frameChunkID n+1]
-        // so when a pop happens, it is fast to determine the previous chunkID, because it is just y
-
-        /**
-         * @brief Clone the chunk @c chunkid but with @c data of length @c len
-         * appended to it.
-         * @param chunkid The chunkID of the chunk to clone
-         * @param data The data to append to the clone of the chunk
-         * @param len The length of the data to append
-         * @return The chunkID of the cloned chunk with the change
-         */
-        Value* generateCloneAndAppend(Value* chunkid, Value* data, Value* len) {
-            Value* ch = generateGet(chunkid);
-            Value* chData = gen.generateChunkGetData(ch);
-            Value* chLen = gen.generateChunkGetLen(ch);
-            Value* newLength = gen.builder.CreateAdd(chLen,len);
-            auto copy = gen.builder.CreateAlloca(gen.t_int8, newLength);
-            gen.builder.CreateMemCpy( copy
-                                    , chData
-                                    , chLen
-                                    , 1
-                                    );
-            if(data) {
-                gen.builder.CreateMemCpy( gen.builder.CreateGEP(copy, {chLen})
-                                        , data
-                                        , len
-                                        , 1
-                                        );
-            } else {
-                gen.builder.CreateMemSet( gen.builder.CreateGEP(copy, {chLen})
-                                        , ConstantInt::get(gen.t_int8, 0)
-                                        , len
-                                        , 1
-                                        );
-            }
-            return generatePut(newLength, copy);
-        }
-
-        /**
-         * @brief Clone the chunk @c chunkid but with @c data appended to it.
-         * The length of the data is determined by the type of @c data.
-         * @param chunkid The chunkID of the chunk to clone
-         * @param data The data to append to the clone of the chunk
-         * @return The chunkID of the cloned chunk with the change
-         */
-        Value* generateCloneAndAppend(Value* chunkid, Value* data) {
-            Value* ch = generateGet(chunkid);
-            Value* chData = gen.generateChunkGetData(ch);
-            Value* chLen = gen.generateChunkGetLen(ch);
-
-            Value* len = gen.generateSizeOf(data);
-            Value* newLength = gen.builder.CreateAdd(chLen,len);
-            auto copy = gen.builder.CreateAlloca(gen.t_int8, newLength);
-            gen.builder.CreateMemCpy( copy
-                                    , chData
-                                    , chLen
-                                    , copy->getPointerAlignment(gen.pinsModule->getDataLayout())
-                                    );
-            auto target = gen.builder.CreateGEP(copy, {chLen});
-            target = gen.builder.CreatePointerCast(target, data->getType()->getPointerTo());
-            gen.builder.CreateStore(data, target);
-            return generatePut(newLength, copy);
-        }
-
-    };
-
-    /**
-     * @class ProcessStack
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief Class for helper functions for the stack of a process
-     */
-    class ProcessStack {
-    private:
-        LLPinsGenerator& gen;
-//        void pushRegisters(GenerationContext* gctx) {
-//            auto& gen = *gctx->gen;
-//        }
-//
-//        void popRegisters(GenerationContext* gctx) {
-//            auto& gen = *gctx->gen;
-//            auto stackChunkID = gen.lts["processes"][gctx->thread_id]["stk"].getLoadedValue(gctx->svout);
-//            auto stackHasRegisters = gen.builder.CreateICmpNE(stackChunkID, ConstantInt::get(gen.t_int, 0));
-//        }
-
-        /**
-         * Type of a single frame
-         */
-        StructType* t_frame;
-
-        /**
-         * Type of a pointer to a frame
-         */
-        PointerType* t_framep;
-
-        /**
-         * ChunkID of an empty stack, set when model is loaded
-         */
-        GlobalVariable* GV_emptyStack;
-
-    public:
-        ProcessStack(LLPinsGenerator& gen)
-        : gen(gen)
-        , GV_emptyStack(nullptr)
-        {
-        }
-
-        void init() {
-            // previous pc, register frame, register index where to store result, previous chunkID
-            t_frame = StructType::create(gen.ctx, {gen.t_int, gen.t_chunkid, gen.t_int, gen.t_chunkid}, "t_stackframe");
-            t_framep = t_frame->getPointerTo();
-        }
-
-        /**
-         * @brief Returns the chunkID of an empty stack
-         * Creates a GLOBAL variable and generates a pins_chunk_put with an empty stack
-         * This is done ONCE and on subsequent calls, the cached global is returned.
-         * @param model The LTSmin model
-         * @return The chunkID of an empty stack
-         */
-        Value* getEmptyStack(Value* model) {
-            std::string name = "emptystack_chunkid";
-            if(!gen.pinsModule->getGlobalVariable(name, true)) {
-
-                // Create global variable
-                assert(!GV_emptyStack);
-                GV_emptyStack = new GlobalVariable(*gen.pinsModule, gen.t_chunkid, false, GlobalValue::LinkageTypes::InternalLinkage, ConstantInt::get(gen.t_chunkid, 0), name);
-                assert(GV_emptyStack);
-
-                // Create an emoty stackframe with all 0's
-                ChunkMapper cm_stack(gen, model, gen.type_stack);
-                auto emptyStack = gen.builder.CreateAlloca(t_frame);
-                gen.builder.CreateMemSet( emptyStack
-                                        , ConstantInt::get(gen.t_int8, 0)
-                                        , gen.generateSizeOf(t_frame)
-                                        , emptyStack->getPointerAlignment(gen.pinsModule->getDataLayout())
-                                        );
-                auto newStackChunkID = cm_stack.generatePut(gen.generateSizeOf(t_frame), emptyStack);
-
-                // Store it in the global
-                gen.builder.CreateStore(newStackChunkID, GV_emptyStack);
-            }
-
-            // Load the global
-            return gen.builder.CreateLoad(GV_emptyStack);
-        }
-
-        /**
-         * @brief Generates a new stackframe
-         * The parameter @c callSite is used to determine where in the register
-         * the result should be stored.
-         * @param oldPC The PC to jump back to when this frame is popped
-         * @param rframe_chunkID The chunkID of the registers to retore when this frame is popped
-         * @param callSite The call instruction that causes this new frame
-         * @param prevFrame_chunkID The chunkID of the previous stackframe on the stack
-         * @return Pointer to the memory location of the new frame
-         */
-        Value* generateNewFrame(Value* oldPC, Value* rframe_chunkID, CallInst* callSite, Value* prevFrame_chunkID) {
-
-            // Find register index of the register where to put the result
-            auto iIdx = gen.valueRegisterIndex.find(callSite);
-            assert(iIdx != gen.valueRegisterIndex.end());
-            auto idx = iIdx->second;
-
-            // Determine the byte offset within the register to this index
-            auto regType = PointerType::get(gen.registerLayout[callSite->getParent()->getParent()].registerLayout, 0);
-            auto regs = gen.builder.CreateBitOrPointerCast( ConstantPointerNull::get(regType)
-                                                          , regType
-                                                          );
-            auto regOffset = gen.builder.CreateGEP( regs
-                                                  , { ConstantInt::get(gen.t_int, 0)
-                                                    , ConstantInt::get(gen.t_int, idx)
-                                                    }
-                                                  );
-            regOffset = gen.builder.CreatePtrToInt(regOffset, gen.t_int);
-
-            // Create a new frame
-            auto frame = gen.builder.CreateAlloca(t_frame);
-            auto prevPC = gen.builder.CreateGEP( frame
-                                               , { ConstantInt::get(gen.t_int, 0)
-                                                 , ConstantInt::get(gen.t_int, 0)
-                                                 }
-                                               );
-            auto prevRegsChunkID = gen.builder.CreateGEP( frame
-                                                        , { ConstantInt::get(gen.t_int, 0)
-                                                          , ConstantInt::get(gen.t_int, 1)
-                                                          }
-                                                        );
-            auto resultRegister = gen.builder.CreateGEP( frame
-                                                       , { ConstantInt::get(gen.t_int, 0)
-                                                         , ConstantInt::get(gen.t_int, 2)
-                                                         }
-                                                       );
-            auto prevFrameChunkID = gen.builder.CreateGEP( frame
-                                                         , { ConstantInt::get(gen.t_int, 0)
-                                                           , ConstantInt::get(gen.t_int, 3)
-                                                           }
-                                                         );
-            gen.builder.CreateStore(oldPC, prevPC);
-            gen.builder.CreateStore(rframe_chunkID, prevRegsChunkID);
-            gen.builder.CreateStore(regOffset, resultRegister);
-            gen.builder.CreateStore(prevFrame_chunkID, prevFrameChunkID);
-
-//            gen.builder.CreateCall( gen.pins("printf")
-//                                  , { gen.generateGlobalString("Generating new frame %i %i %i %i\n")
-//                                    , oldPC
-//                                    , rframe_chunkID
-//                                    , regOffset
-//                                    , prevFrame_chunkID
-//                                    }
-//                                  );
-
-            // Return the new frame
-            return frame;
-        }
-
-        Value* getPrevPCFromFrame(Value* frame) {
-            frame = gen.builder.CreatePointerCast(frame, t_framep);
-            auto prevPC = gen.builder.CreateGEP( frame
-                                               , { ConstantInt::get(gen.t_int, 0)
-                                                 , ConstantInt::get(gen.t_int, 0)
-                                                 }
-                                               );
-            return gen.builder.CreateLoad(prevPC);
-        }
-
-        Value* getPrevRegisterChunkIDFrame(Value* frame) {
-            frame = gen.builder.CreatePointerCast(frame, t_framep);
-            auto prevRegsChunkID = gen.builder.CreateGEP( frame
-                                                        , { ConstantInt::get(gen.t_int, 0)
-                                                          , ConstantInt::get(gen.t_int, 1)
-                                                          }
-                                                        );
-            return gen.builder.CreateLoad(prevRegsChunkID);
-        }
-
-        Value* getResultRegisterOffsetFromFrame(Value* frame) {
-            frame = gen.builder.CreatePointerCast(frame, t_framep);
-            auto resultRegister = gen.builder.CreateGEP( frame
-                                                       , { ConstantInt::get(gen.t_int, 0)
-                                                         , ConstantInt::get(gen.t_int, 2)
-                                                         }
-                                                       );
-            return gen.builder.CreateLoad(resultRegister);
-        }
-
-        Value* getPrevStackChunkIDFromFrame(Value* frame) {
-            frame = gen.builder.CreatePointerCast(frame, t_framep);
-            auto prevFrameChunkID = gen.builder.CreateGEP( frame
-                                                         , { ConstantInt::get(gen.t_int, 0)
-                                                           , ConstantInt::get(gen.t_int, 3)
-                                                           }
-                                                         );
-            return gen.builder.CreateLoad(prevFrameChunkID);
-        }
-
-        /**
-         * @brief Push a new frame on the stack, describing the current
-         * call-state and how to revert to it. Then sets the program
-         * counter to the start of the specified function.
-         * This is used for example when calling a function to save e.g.
-         * the registers and the program counter.
-         * To revert to the previous frame, use @c popStackFrame().
-         *
-         * Changes:
-         *   - ["processes"][gctx->thread_id]["pc"]
-         *   - ["processes"][gctx->thread_id]["stk"]
-         *
-         * @param gctx GenerationContext
-         * @param F The function
-         * @param setupCall
-         */
-        void pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, CallInst* callSite) {
-            auto& gen = *gctx->gen;
-            auto& builder = gen.builder;
-
-            llvmgen::BBComment(builder, "pushStackFrame");
-
-            auto dst_pc = gen.lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
-            auto dst_reg = gen.lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-
-            // If this is the setup call for main or a new thread
-            if(callSite == nullptr) {
-
-                // Merely push an empty stack
-                auto pStackChunkID = gen.lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
-                gen.builder.CreateStore(getEmptyStack(gctx->model), pStackChunkID);
-
-            } else {
-
-                // Create new register frame chunk containing the current register values
-                ChunkMapper cm_rframe(gen, gctx->model, gen.type_register_frame);
-                Value* chunkid = cm_rframe.generatePut( gen.t_registers_max_size
-                                                      , dst_reg
-                                                      );
-
-                // Create new frame
-                auto pStackChunkID = gen.lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
-                auto stackChunkID = builder.CreateLoad(pStackChunkID, "stackChunkID");
-                auto frame = generateNewFrame( gen.builder.CreateLoad(dst_pc, "pc")
-                                             , chunkid
-                                             , callSite
-                                             , stackChunkID
-                                             );
-
-                // Put the new frame on the stack
-                ChunkMapper cm_stack(gen, gctx->model, gen.type_stack);
-                auto newStackChunkID = cm_stack.generatePut(gen.generateSizeOf(t_frame), frame);
-                gen.builder.CreateStore(newStackChunkID, pStackChunkID);
-
-            }
-
-            // Check if the number of arguments is correct
-            // Too few arguments results in 0-values for the later parameters
-            if(args.size() > F.arg_size()) {
-                std::cout << "calling function with too many arguments" << std::endl;
-                std::cout << "  #arguments: " << args.size() << std::endl;
-                std::cout << "  #params: " << F.arg_size() << std::endl;
-                assert(0);
-            }
-
-            // Assign the arguments to the parameters
-            auto param = F.arg_begin();
-            for(auto& arg: args) {
-
-                // Map and load the argument
-                auto v = gen.vMap(gctx, arg);
-
-                // Map the parameter register to the location in the state vector
-                auto vParam = gen.vReg(dst_reg, &*param);
-
-                // Perform the store
-                gen.builder.CreateStore(v, vParam);
-
-                // Next
-                param++;
-            }
-
-            // Set the program counter to the start of the pushed function
-            auto loc = gen.programLocations[&*F.getEntryBlock().begin()];
-            assert(loc);
-            gen.builder.CreateStore(ConstantInt::get(gen.t_int, loc), dst_pc);
-        }
-
-        /**
-         * @brief Pops the latest frame from the stack and restores e.g.
-         * registers and the program counter to those specified by that
-         * frame.
-         * This used used for example by the handling of the Ret instruction.
-         *
-         * Changes:
-         *   - ["processes"][gctx->thread_id]["pc"]
-         *   - ["processes"][gctx->thread_id]["stk"]
-         *   - ["processes"][gctx->thread_id]["r"]
-         *
-         * @param gctx GenerationContext
-         * @param result The return instruction that causes the pop
-         */
-        void popStackFrame(GenerationContext* gctx, ReturnInst* result) {
-            auto& gen = *gctx->gen;
-            auto& builder = gen.builder;
-
-            llvmgen::BBComment(builder, "popStackFrame");
-
-            auto dst_pc = gen.lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
-            auto pStackChunkID = gen.lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
-            auto stackChunkID = builder.CreateLoad(pStackChunkID, "stackChunkID");
-
-            // Load the return value from the current registers
-            Value* retVal = nullptr;
-            if(result && result->getReturnValue()) {
-                retVal = gen.vMap(gctx, result->getReturnValue());
-            }
-
-            // Generate an if for when this is the last frame or not
-            llvmgen::If If(builder, "if_there_are_frames");
-            If.setCond(builder.CreateICmpNE(stackChunkID, getEmptyStack(gctx->model)));
-            BasicBlock* BBTrue = If.getTrue();
-            BasicBlock* BBFalse = If.getFalse();
-            If.generate();
-
-
-            // When there is a frame to be popped
-            {
-                builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
-
-                // Get the stack
-                ChunkMapper cm_stack(gen, gctx->model, gen.type_stack);
-                Value* chunk = cm_stack.generateGet(stackChunkID);
-                Value* chData = gen.generateChunkGetData(chunk);
-
-                // Pop the last frame from the stack by merely using the chunkID of
-                // the precious stackframe
-                builder.CreateStore(getPrevStackChunkIDFromFrame(chData), pStackChunkID);
-
-                // Load the PC of the caller function from the frame and store that as the new PC
-                auto prevPC = getPrevPCFromFrame(chData);
-                gen.builder.CreateStore(prevPC, dst_pc);
-
-                // Restore stored registers
-                auto prevRegsChunkID = getPrevRegisterChunkIDFrame(chData);
-
-                ChunkMapper cm_rframe(gen, gctx->model, gen.type_register_frame);
-                Value* chunkReg = cm_rframe.generateGet(prevRegsChunkID);
-                Value* chRegLen = gen.generateChunkGetLen(chunkReg);
-                Value* chRegData = gen.generateChunkGetData(chunkReg);
-
-                auto registers = gen.lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-                gen.builder.CreateMemCpy( registers
-                                        , chRegData
-                                        , chRegLen
-                                        , chRegData->getPointerAlignment(gen.pinsModule->getDataLayout())
-                                        );
-
-                // Store the result in the right register, if there is a return value
-                if(retVal) {
-                    auto offset = getResultRegisterOffsetFromFrame(chData);
-//                    gen.builder.CreateCall( gen.pins("printf")
-//                                          , { gen.generateGlobalString("Popping frame, result register offset %i, result %i\n")
-//                                            , offset
-//                                            , retVal
-//                                            }
-//                                          );
-                    auto resultRegister = gen.vRegUsingOffset(registers, offset, result->getReturnValue()->getType());
-                    gen.builder.CreateStore(retVal, resultRegister);
-                }
-
-            }
-
-            // When there is no frame to be popped
-            {
-                // Set the PC of this thread to terminated
-                builder.SetInsertPoint(&*BBFalse->getFirstInsertionPt());
-                gen.builder.CreateStore(ConstantInt::get(gen.t_int, 0), dst_pc);
-
-                // If there is a return value, store the result in the list of thread
-                // results, such that it can be obtained later by for example pthread_join()
-                if(retVal) {
-
-                    // Create a new tuple {tid,result}
-                    auto t_tres = StructType::get(gen.ctx, {gen.t_int64, gen.t_voidp});
-                    auto newTres = gen.builder.CreateAlloca(t_tres);
-
-                    auto newTres_tid = gen.builder.CreateGEP( t_tres
-                                                        , newTres
-                                                        , { ConstantInt::get(gen.t_int, 0)
-                                                          , ConstantInt::get(gen.t_int, 0)
-                                                          }
-                                                        );
-                    auto newTres_res = gen.builder.CreateGEP( t_tres
-                                                        , newTres
-                                                        , { ConstantInt::get(gen.t_int, 0)
-                                                          , ConstantInt::get(gen.t_int, 1)
-                                                          }
-                                                        );
-
-                    // Set the TID of the tuple
-                    auto tid_p = gen.lts["processes"][gctx->thread_id]["tid"].getValue(gctx->src);
-                    auto tid = builder.CreateIntCast(gen.builder.CreateLoad(tid_p), gen.t_int64, false);
-                    gen.builder.CreateStore(tid, newTres_tid);
-
-                    // Set the result of the tuple
-                    auto retValVoidP = builder.CreateIntToPtr(retVal, gen.t_voidp);
-                    gen.builder.CreateStore(retValVoidP, newTres_res);
-
-                    // Append the new tuple to the list of tuples
-                    ChunkMapper cm_tres = ChunkMapper(gen, gctx->model, gen.type_threadresults);
-                    auto tres_p = gen.lts["tres"].getValue(gctx->svout);
-                    cm_tres.generateCloneAndAppend(tres_p, newTres, gen.generateSizeOf(t_tres));
-                }
-            }
-
-            // Continue the rest of the code after the If
-            builder.SetInsertPoint(If.getFinal());
-
-        }
-
-    };
-
-    /**
      * @class Heap
      * @author Freark van der Berg
      * @date 04/07/17
@@ -1600,11 +89,7 @@ public:
         Value* memory;
         Value* memory_len;
         Value* memory_data;
-        Value* memory_info;
-        Value* memory_info_len;
-        Value* memory_info_data;
         ChunkMapper cm_memory;
-        ChunkMapper cm_memory_info;
     public:
 
         Heap(GenerationContext* gctx, Value* sv)
@@ -1613,11 +98,7 @@ public:
         ,   memory(nullptr)
         ,   memory_len(nullptr)
         ,   memory_data(nullptr)
-        ,   memory_info(nullptr)
-        ,   memory_info_len(nullptr)
-        ,   memory_info_data(nullptr)
-        ,   cm_memory(*gctx->gen, gctx->model, gctx->gen->type_memory)
-        ,   cm_memory_info(*gctx->gen, gctx->model, gctx->gen->type_memory_info)
+        ,   cm_memory(gctx, gctx->gen->type_memory)
         {
             //assert(gctx->thread_id==0 && "this code assumes all heap vars to be in the same pool");
         }
@@ -1635,25 +116,17 @@ public:
             llvmgen::BBComment(gctx->gen->builder, "Heap: download");
 
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
-            auto svMemoryInfo = gctx->gen->lts["processes"][gctx->thread_id]["memory_info"].getValue(sv);
 
             auto memory = cm_memory.generateGet(svMemory);
-            auto memory_info = cm_memory_info.generateGet(svMemoryInfo);
             auto v_memory_data      = gctx->gen->generateChunkGetData(memory);
             auto v_memory_len       = gctx->gen->generateChunkGetLen(memory);
-            auto v_memory_info_data = gctx->gen->generateChunkGetData(memory_info);
-            auto v_memory_info_len  = gctx->gen->generateChunkGetLen(memory_info);
 
             auto F = gctx->gen->builder.GetInsertBlock()->getParent();
             if(!memory_data)      memory_data      = addAlloca(v_memory_data->getType()     , F);
             if(!memory_len)       memory_len       = addAlloca(v_memory_len->getType()      , F);
-            if(!memory_info_data) memory_info_data = addAlloca(v_memory_info_data->getType(), F);
-            if(!memory_info_len)  memory_info_len  = addAlloca(v_memory_info_len->getType() , F);
 
             gctx->gen->builder.CreateStore(v_memory_data, memory_data);
             gctx->gen->builder.CreateStore(v_memory_len , memory_len);
-            gctx->gen->builder.CreateStore(v_memory_info_data, memory_info_data);
-            gctx->gen->builder.CreateStore(v_memory_info_len, memory_info_len);
         }
 
         /**
@@ -1666,31 +139,11 @@ public:
             //download();
 
             llvmgen::BBComment(gctx->gen->builder, "Heap: malloc");
-            llvm::Function* F = gctx->gen->llmc_func("llmc_os_malloc");
-            auto vThreadID = ConstantInt::get(F->getFunctionType()->getParamType(2), gctx->thread_id);
-            auto vN = gctx->gen->builder.CreateIntCast(n, F->getFunctionType()->getParamType(3), false);
 
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
-            auto svMemoryInfo = gctx->gen->lts["processes"][gctx->thread_id]["memory_info"].getValue(sv);
 
-            auto memoryData = cm_memory.generateCloneAndAppend(svMemory, nullptr, n);
-
-            Value* v_memory_info_len = nullptr;
-            auto v_memory_info_data = cm_memory_info.generateGetAndCopy(svMemoryInfo, v_memory_info_len);
-
-            Value* res =  gctx->gen->builder.CreateCall( F
-                                                       , { v_memory_info_len
-                                                         , v_memory_info_data
-                                                         , vThreadID
-                                                         , vN
-                                                         }
-                                                       );
-
-            auto memory_info = cm_memory_info.generatePut(v_memory_info_len, v_memory_info_data);
-            gctx->gen->builder.CreateStore(memoryData, svMemory);
-            gctx->gen->builder.CreateStore(memory_info, svMemoryInfo);
-
-            return res;
+            auto memoryData = cm_memory.generateGet(svMemory);
+            return gctx->gen->generateChunkGetLen(memoryData);
         }
 
         /**
@@ -1721,220 +174,22 @@ public:
          *
          * Changes:
          *   - ["processes"][gctx->thread_id]["memory"]
-         *   - ["processes"][gctx->thread_id]["memory_info"]
          */
         void upload() {
 
             llvmgen::BBComment(gctx->gen->builder, "Heap: upload");
 
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
-            auto svMemoryInfo = gctx->gen->lts["processes"][gctx->thread_id]["memory_info"].getValue(sv);
 
             auto v_memory_data = gctx->gen->builder.CreateLoad(memory_data, "memory_data");
             auto v_memory_len = gctx->gen->builder.CreateLoad(memory_len, "memory_len");
-            auto v_memory_info_data = gctx->gen->builder.CreateLoad(memory_info_data, "memory_info_data");
-            auto v_memory_info_len = gctx->gen->builder.CreateLoad(memory_info_len, "memory_info_len");
             auto memory = cm_memory.generatePut(v_memory_len, v_memory_data);
-            auto memory_info = cm_memory_info.generatePut(v_memory_info_len, v_memory_info_data);
             gctx->gen->builder.CreateStore(memory, svMemory);
-            gctx->gen->builder.CreateStore(memory_info, svMemoryInfo);
         }
 
     };
 
-    /**
-     * @class LLVMLTS
-     * @author Freark van der Berg
-     * @date 04/07/17
-     * @file LLPinsGenerator.h
-     * @brief Class describing the LTS type of the LLVM model,
-     */
-    class LLVMLTS {
-    public:
-
-        LLVMLTS()
-        : sv(nullptr)
-        , labels(nullptr)
-        , edgeLabels(nullptr)
-        {
-        }
-
-        /**
-         * @brief Adds a state-vector node to the root node of the SV tree
-         * @param t The SVTree node to add
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVTree* t) {
-            (*sv) << t;
-            return *this;
-        }
-
-        /**
-         * @brief Adds a state label node to the LTS type
-         * @param t The SVLabel node to add
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVLabel* t) {
-            (*labels) << t;
-            return *this;
-        }
-
-        /**
-         * @brief Adds an edge label node to the LTS type
-         * @param t The SVEdgeLabel node to add
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVEdgeLabel* t) {
-            (*edgeLabels) << t;
-            return *this;
-        }
-
-        /**
-         * @brief Sets the root node of the SV tree
-         * @param r The root node to set
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVRoot* r) {
-            assert(!sv);
-            sv = r;
-            return *this;
-        }
-
-        /**
-         * @brief Sets the root node of the state label tree
-         * @param r The root node to set
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVLabelRoot* r) {
-            assert(!labels);
-            labels = r;
-            return *this;
-        }
-
-        /**
-         * @brief Sets the root node of the edge label tree
-         * @param r The root node to set
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVEdgeLabelRoot* r) {
-            assert(!edgeLabels);
-            edgeLabels = r;
-            return *this;
-        }
-
-        /**
-         * @brief Adds the SVType @c t to the list of types in the LTS
-         * @param t the SVType to add
-         * @return *this
-         */
-        LLVMLTS& operator<<(SVType* t) {
-            types.push_back(t);
-            return *this;
-        }
-
-        /**
-         * @brief Dumps information on this LTS Type to std::cout
-         */
-        void dump() {
-            auto& o = std::cout;
-
-            std::function<void(SVTree*,int)> pr = [&](SVTree* t, int n) -> void {
-                for(int i=n; i--;) {
-                    o << "  ";
-                }
-                o << t->getName();
-                if(t->getChildren().size() > 0) {
-                    o << ":";
-                }
-                o << std::endl;
-                for(auto& c: t->getChildren()) {
-                    pr(c, n+1);
-                }
-            };
-
-            o << "Types: " << std::endl;
-            int n = 0;
-            for(auto& t: types) {
-                o << "  " << t->index << ": " << t->_name << std::endl;
-                n++;
-            }
-
-            pr(sv, 0);
-        }
-
-        /**
-         * @brief Verifies the correctness of this LTS type
-         * @return true iff the LTS type passes
-         */
-        bool verify() {
-            bool ok = true;
-            if(sv && !sv->verify()) ok = false;
-            if(labels && !labels->verify()) ok = false;
-            if(edgeLabels && !edgeLabels->verify()) ok = false;
-            return ok;
-        }
-
-        /**
-         * @brief Finalizes this LTS Type. Use this when no more changes
-         * are performed. This will determine the index of the types.
-         */
-        void finish() {
-            int n = 0;
-            for(auto& t: types) {
-                t->index = n++;
-            }
-        }
-
-        /**
-         * @brief Accesses the child of the root SV node with the specified
-         * name
-         * @param name The name of the child to access.
-         * @return The SVTree child node with the specified name.
-         */
-        SVTree& operator[](std::string name) {
-            return (*sv)[name];
-        }
-
-        /**
-         * @brief Accesses the chil of the root SV node at the specified index
-         * @param i The index of the child to access.
-         * @return The SVTree child node at the specified index.
-         */
-        SVTree& operator[](size_t i) {
-            return (*sv)[i];
-        }
-
-        bool hasSV() const { return sv != nullptr; }
-        bool hasLabels() const { return labels != nullptr; }
-        bool hasEdgeLabels() const { return edgeLabels != nullptr; }
-
-        SVRoot& getSV() const {
-            assert(sv);
-            return *sv;
-        }
-
-        SVLabelRoot& getLabels() const {
-            assert(labels);
-            return *labels;
-        }
-
-        SVEdgeLabelRoot& getEdgeLabels() const {
-            assert(edgeLabels);
-            return *edgeLabels;
-        }
-
-        std::vector<SVType*>& getTypes() {
-            return types;
-        }
-
-    private:
-        SVRoot* sv;
-        SVLabelRoot* labels;
-        SVEdgeLabelRoot* edgeLabels;
-        std::vector<SVType*> types;
-    };
-
-private:
+public:
     std::unique_ptr<llvm::Module> up_module;
     LLVMContext& ctx;
     llvm::Module* module;
@@ -1992,7 +247,7 @@ private:
     std::unordered_map<std::string, AllocaInst*> allocas;
     std::unordered_map<std::string, GlobalVariable*> generatedStrings;
 
-    LLVMLTS lts;
+    LLVMLTSType lts;
 
     SVType* type_status;
     SVType* type_pc;
@@ -2002,7 +257,6 @@ private:
     SVType* type_register_frame;
     SVType* type_registers;
     SVType* type_memory;
-    SVType* type_memory_info;
     SVType* type_heap;
     SVType* type_action;
 
@@ -2022,7 +276,7 @@ public:
         , nextProgramLocation(1)
         , out(out)
         , roout(out.getConsoleWriter().ss())
-        , stack(*this)
+        , stack(this)
         , debugChecks(false)
         {
         module = up_module.get();
@@ -2634,11 +888,6 @@ public:
                                  , t_chunkid
                                  , this
                                  );
-        type_memory_info = new SVType( "minfo"
-                                 , LTStypeChunk
-                                 , t_chunkid
-                                 , this
-                                 );
         type_heap = new SVType( "heap"
                                  , LTStypeChunk
                                  , t_chunkid
@@ -2659,7 +908,6 @@ public:
         lts << type_register_frame;
         lts << type_registers;
         lts << type_memory;
-        lts << type_memory_info;
         lts << type_heap;
         lts << type_action;
 
@@ -2675,7 +923,6 @@ public:
                 << new SVTree("tid", type_tid)
                 << new SVTree("pc", type_pc)
                 << new SVTree("memory", type_memory)
-                << new SVTree("memory_info", type_memory_info)
                 << new SVTree("stk", type_stack)
                 << new SVTree("r", type_registers)
                 ;
@@ -3261,7 +1508,7 @@ public:
         llvmgen::BBComment(builder, "Instruction: " + strout.str());
 
         // Generate the action label
-        ChunkMapper cm_action(*this, gctx->model, type_action);
+        ChunkMapper cm_action(gctx, type_action);
         Value* actionLabelChunkID = cm_action.generatePut( ConstantInt::get(t_int, strout.str().length())
                                                          , generateGlobalString(strout.str())
                                                          );
@@ -3331,7 +1578,6 @@ public:
      *   - ["processes"][gctx->thread_id]["r"]
      *   - ["processes"][gctx->thread_id]["pc"]
      *   - ["processes"][gctx->thread_id]["memory"]
-     *   - ["processes"][gctx->thread_id]["memory_info"]
      *
      * @param gctx GenerationContext
      * @param I The instruction to generate the next-state relation of
@@ -3359,7 +1605,7 @@ public:
         raw_string_ostream strout(str);
         strout << "r[" << valueRegisterIndex[I] << "] " << *I;
 
-        ChunkMapper cm_action(*this, gctx->model, type_action);
+        ChunkMapper cm_action(gctx, type_action);
         Value* actionLabelChunkID = cm_action.generatePut( ConstantInt::get(t_int, strout.str().length())
                                                          , generateGlobalString(strout.str())
                                                          );
@@ -3456,7 +1702,7 @@ public:
             builder.Insert(IC);
             setDebugLocation(IC, __FILE__, __LINE__);
         } else {
-            ChunkMapper cm_memory(*this, gctx->model, type_memory);
+            ChunkMapper cm_memory(gctx, type_memory);
             auto chunkMemory = lts["processes"][gctx->thread_id]["memory"].getValue(gctx->svout);
             Value* sv_memorylen = nullptr;
 
@@ -3501,7 +1747,7 @@ public:
         auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
 
         // Load the memory by making a copy
-        ChunkMapper cm_memory(*this, gctx->model, type_memory);
+        ChunkMapper cm_memory(gctx, type_memory);
         auto chunkMemory = lts["processes"][gctx->thread_id]["memory"].getValue(gctx->svout);
         Value* sv_memorylen;
         auto sv_memorydata = cm_memory.generateGetAndCopy(chunkMemory, sv_memorylen);
@@ -3723,7 +1969,7 @@ public:
 
                 //auto BBEnd = BasicBlock::Create(ctx, "pthread_join_if_pos_end", builder.GetInsertBlock()->getParent());
 
-                ChunkMapper cm_tres = ChunkMapper(*this, gctx->model, type_threadresults);
+                ChunkMapper cm_tres = ChunkMapper(gctx, type_threadresults);
 
                 auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
                 auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
@@ -3969,7 +2215,6 @@ public:
             // Create some space for chunks
             BasicBlock* entry  = BasicBlock::Create(ctx, "entry", f_pins_model_init);
             builder.SetInsertPoint(entry);
-            auto sv_memory_init_info = builder.CreateAlloca(t_chunkid);
             auto sv_memory_init_data = builder.CreateAlloca(t_chunkid);
 
             // Determine the size of the dependency matrix
@@ -4006,6 +2251,14 @@ public:
 
             // Initialize the initial state
             {
+
+                GenerationContext gctx = {};
+                gctx.gen = this;
+                gctx.model = model;
+                gctx.src = nullptr;
+                gctx.svout = s_statevector;
+                gctx.alteredPC = false;
+
                 // Init to 0
                 builder.CreateMemSet( s_statevector
                                     , ConstantInt::get(t_int8, 0)
@@ -4018,21 +2271,15 @@ public:
                 builder.CreateCall( F
                                   , { builder.CreatePointerCast(model, F->getFunctionType()->getParamType(0))
                                     , ConstantInt::get(t_int, type_memory->index)
-                                    , sv_memory_init_info
-                                    , ConstantInt::get(t_int, type_memory_info->index)
                                     , sv_memory_init_data
                                     }
                                   );
 
-                // llmc_os_memory_init stores the chunkIDs of the memory and
-                // memory_info chunks in the allocas passed to it, so load
-                // and store them in the initial state
-                auto sv_memory_init_info_l = builder.CreateLoad(sv_memory_init_info, "sv_memory_init_info");
+                // llmc_os_memory_init stores the chunkIDs of the memory chunk
+                // in the allocas passed to it, so load and store them in the
+                // initial state
                 auto sv_memory_init_data_l = builder.CreateLoad(sv_memory_init_data, "sv_memory_init_data");
                 for(size_t threadID = 0; threadID < MAX_THREADS; ++threadID) {
-                    builder.CreateStore( sv_memory_init_info_l
-                                       , lts["processes"][threadID]["memory_info"].getValue(s_statevector)
-                                       );
                     builder.CreateStore( sv_memory_init_data_l
                                        , lts["processes"][threadID]["memory"].getValue(s_statevector)
                                        );
@@ -4041,10 +2288,10 @@ public:
                 // Init stack
                 for(size_t threadID = 0; threadID < MAX_THREADS; ++threadID) {
                     auto pStackChunkID = lts["processes"][threadID]["stk"].getValue(s_statevector);
-                    builder.CreateStore(stack.getEmptyStack(model), pStackChunkID);
+                    builder.CreateStore(stack.getEmptyStack(&gctx), pStackChunkID);
                 }
 
-                ChunkMapper cm_tres = ChunkMapper(*this, model, type_threadresults);
+                ChunkMapper cm_tres = ChunkMapper(&gctx, type_threadresults);
                 auto tres_p = lts["tres"].getValue(s_statevector);
                 auto t_tres = StructType::get(ctx, {t_int64, t_voidp});
                 auto newTres = builder.CreateAlloca(t_tres);
@@ -4159,7 +2406,7 @@ public:
             // If the variable needs multiple slots, the name will have a
             // counter, counting the number of slots from the start of the
             // variable in the state-vector
-            IRStringBuilder irs(*this, 256);
+            llvmgen::IRStringBuilder<LLPinsGenerator> irs(*this, 256);
             irs << node->getFullName();
             irs << tg;
             auto name = irs.str();

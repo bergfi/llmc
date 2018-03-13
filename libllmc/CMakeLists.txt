@@ -14,6 +14,11 @@ if(NOT CLANGEXEC)
 endif()
 
 add_library(libllmc
+    generation/ChunkMapper.cpp
+    generation/GenerationContext.cpp
+    generation/LLVMLTS.cpp
+    generation/ProcessStack.cpp
+    generation/TransitionGroups.cpp
     LLPinsGenerator.cpp
     llvmgen.cpp
 )
