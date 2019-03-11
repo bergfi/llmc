@@ -47,9 +47,9 @@ int nextAll(model_t model, int* src, TransitionCB cb, void* ctx) {
 }
 
 int pins_model_init(model_t model) {
-	matrix_t dm;
-	dm_create(&dm, VARS, VARS);
-	dm_fill(&dm);
+	matrix_t* dm = (matrix_t*)malloc(sizeof(matrix_t));
+	dm_create(dm, VARS, VARS);
+	dm_fill(dm);
 
 	lts_type_t lts = lts_type_create();
 
@@ -81,7 +81,7 @@ int pins_model_init(model_t model) {
 
 	GBsetLTStype(model, lts);
 
-	GBsetDMInfo(model, &dm);
+	GBsetDMInfo(model, dm);
 	GBsetNextStateLong(model, nextLong);
 	GBsetNextStateAll(model, nextAll);
 

@@ -45,6 +45,7 @@ bool compile(File const& bin_llc, File const& input, File const& output, Message
     sysOps.command = bin_llc.getFilePath()
                    + " -filetype=obj"
                    + " -relocation-model=pic"
+                   + " -O=3"
                    + " " + input.getFilePath()
                    + " -o " + output.getFilePath()
                    ;
@@ -91,6 +92,7 @@ bool link(File const& bin_cc, File const& input, File const& output, MessageForm
     sysOps.command = bin_cc.getFilePath()
                    + " -g -shared"
                    + " " + input.getFilePath()
+                   + " -O3"
                    + " " + libLLMCOSObject.getFilePath()
                    + " -o " + output.getFilePath()
                    ;

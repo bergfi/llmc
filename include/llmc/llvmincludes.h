@@ -11,16 +11,17 @@
 #include <llvm/Bitcode/BitcodeReader.h>
 #endif
 
-#include <llvm/IR/BasicBlock.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/ExecutionEngine/Interpreter.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/IR/AssemblyAnnotationWriter.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>

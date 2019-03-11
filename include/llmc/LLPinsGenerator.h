@@ -1065,8 +1065,8 @@ public:
             gctx->alteredPC = false;
 
             // If the transition group (TG) models an instruction
-            if(t->getType() == TransitionGroup::Type::Instruction) {
-                auto ti = static_cast<TransitionGroupInstruction*>(t);
+            if(t->getType() == TransitionGroup::Type::Instructions) {
+                auto ti = static_cast<TransitionGroupInstructions*>(t);
 
                 // Set the thread ID
                 gctx->thread_id = ti->thread_id;
@@ -1085,7 +1085,7 @@ public:
                 // Check that the PC in the SV matches the PC of this TG
                 auto pc = builder.CreateLoad(src_pc, "pc");
                 auto pc_check = builder.CreateICmpEQ( pc
-                                                    , ConstantInt::get(t_int, programLocations[ti->srcPC])
+                                                    , ConstantInt::get(t_int, programLocations[ti->instructions.front()])
                                                     );
                 builder.CreateCondBr(pc_check, bb_transition, bb_end);
 
@@ -1096,16 +1096,19 @@ public:
 
                     // Copy the SV into a local one
                     builder.CreateMemCpy( gctx->svout
+                                        , gctx->svout->getPointerAlignment(pinsModule->getDataLayout())
                                         , gctx->src
-                                        , t_statevector_size
                                         , src->getParamAlignment()
+                                        , t_statevector_size
                                         );
 
                     // Update the destination PC
-                    builder.CreateStore(ConstantInt::get(t_int, programLocations[ti->dstPC]), dst_pc);
+                    builder.CreateStore(ConstantInt::get(t_int, programLocations[ti->instructions.back()->getNextNode()]), dst_pc);
 
-                    // Generate the next state for the instruction
-                    generateNextStateForInstruction(gctx, ti->srcPC);
+                    // Generate the next state for the instructions
+                    for(auto I: ti->instructions) {
+                        generateNextStateForInstruction(gctx, I);
+                    }
 
                     // Generate the next state for all other actions
                     for(auto& action: ti->actions) {
@@ -1219,7 +1222,7 @@ public:
 
             builder.SetInsertPoint(main_start);
             builder.CreateCall(pins("printf"), {generateGlobalString("main_start\n")});
-            builder.CreateMemCpy(gctx_copy.svout, src, t_statevector_size, src->getParamAlignment());
+            builder.CreateMemCpy(gctx_copy.svout, gctx_copy.svout->getPointerAlignment(pinsModule->getDataLayout()), src, src->getParamAlignment(), t_statevector_size);
 //            for(int i = 0; i < MAX_THREADS; ++i) {
 //                gctx_copy.thread_id = i;
                 stack.pushStackFrame(&gctx_copy, *module->getFunction("main"), {}, nullptr);
@@ -1271,8 +1274,55 @@ public:
      * @param BB The LLVM BasicBlock to create transition groups for
      */
     void createTransitionGroupsForBasicBlock(BasicBlock& BB) {
-        for(auto& I: BB) {
-            createTransitionGroupsForInstruction(I);
+        BasicBlock::iterator II = BB.begin();
+        BasicBlock::iterator IE = BB.end();
+        while(II != IE) {
+            II = createTransitionGroupsForInstruction(II, IE);
+        }
+    }
+
+    bool isCollapsableInstruction(Instruction* I) {
+        switch(I->getOpcode()) {
+            case Instruction::Alloca:
+                return true;
+            case Instruction::Load:
+            case Instruction::Store:
+                return false;
+            case Instruction::Ret:
+            case Instruction::Br:
+            case Instruction::Switch:
+            case Instruction::IndirectBr:
+            case Instruction::Invoke:
+            case Instruction::Resume:
+                return false;
+            case Instruction::Unreachable:
+                return true;
+            case Instruction::CleanupRet:
+            case Instruction::CatchRet:
+            case Instruction::CatchSwitch:
+                return false;
+            case Instruction::GetElementPtr:
+                return true;
+            case Instruction::Fence:
+            case Instruction::AtomicCmpXchg:
+            case Instruction::AtomicRMW:
+                return false;
+            case Instruction::CleanupPad:
+            case Instruction::PHI:
+                return true;
+            case Instruction::Call:
+                return false;
+            case Instruction::VAArg:
+            case Instruction::ExtractElement:
+            case Instruction::InsertElement:
+            case Instruction::ShuffleVector:
+            case Instruction::ExtractValue:
+            case Instruction::InsertValue:
+                return true;
+            case Instruction::LandingPad:
+                return false;
+            default:
+                return true;
         }
     }
 
@@ -1280,36 +1330,61 @@ public:
      * @brief Create transition groups for the Instruction @c I
      * @param I The LLVM Instruction to create transition groups for
      */
-    void createTransitionGroupsForInstruction(Instruction& I) {
+    BasicBlock::iterator createTransitionGroupsForInstruction(BasicBlock::iterator& It, BasicBlock::iterator& IE) {
 
-        // Assign a PC to the instruction if it does not have one yet
-        if(programLocations[&I] == 0) {
-            programLocations[&I] = nextProgramLocation++;
-        }
-
-        // Assign a PC to the next instruction if it does not have one yet
-        auto II = I.getIterator();
-        II++;
-        if(programLocations[&*II] == 0) {
-            programLocations[&*II] = nextProgramLocation++;
-        }
+        std::vector<Instruction*> instructions;
 
         // Generate a description
         std::string desc;
         raw_string_ostream rdesc(desc);
-        rdesc << I;
+
+        while(It != IE && isCollapsableInstruction(&*It)) {
+
+            auto I = &*It;
+            rdesc << I;
+
+            // Assign a PC to the instruction if it does not have one yet
+            if(programLocations[I] == 0) {
+                programLocations[I] = nextProgramLocation++;
+            }
+
+            instructions.push_back(I);
+
+            It++;
+        }
+
+        do {
+
+            auto I = &*It;
+            rdesc << I;
+
+            // Assign a PC to the instruction if it does not have one yet
+            if(programLocations[I] == 0) {
+                programLocations[I] = nextProgramLocation++;
+            }
+
+            instructions.push_back(I);
+
+            It++;
+        } while(It != IE && isCollapsableInstruction(&*It));
+
+        if(programLocations[&*It] == 0) {
+            programLocations[&*It] = nextProgramLocation++;
+        }
 
         // Create the TG
         for(int i = 0; i < MAX_THREADS; ++i) {
-            auto tg = new TransitionGroupInstruction(i, &I, &*II, {}, {});
+            auto tg = new TransitionGroupInstructions(i, instructions, {}, {});
             tg->setDesc(rdesc.str());
             addTransitionGroup(tg);
         }
 
         // Print
-        out << "  " << programLocations[&I] << " -> " << programLocations[&*II] << " ";
-        I.print(roout, true);
+        out << "  " << programLocations[instructions.front()] << " -> " << programLocations[instructions.back()] << " ";
+        //I.print(roout, true);
         out << std::endl;
+
+        return It;
     }
 
     /**
@@ -1551,6 +1626,7 @@ public:
             case Instruction::InsertValue:
             case Instruction::LandingPad:
                 roout << "Unsupported instruction: " << *I << "\n";
+                assert(0);
                 return;
             default:
                 break;
@@ -1869,180 +1945,193 @@ public:
     void generateNextStateForCall(GenerationContext* gctx, CallInst* I) {
         assert(I);
 
-        // If this is a declaration, there is no body within the LLVM model,
-        // thus we need to handle it differently.
-        Function* F = I->getCalledFunction();
-        if(F->isDeclaration()) {
+        // If this is inline assembly
+        if(I->isInlineAsm()) {
+            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledValue());
+            out.reportNote("Found ASM: " + inlineAsm->getAsmString());
+            assert(0);
+        } else {
 
-            auto it = gctx->gen->hookedFunctions.find(F->getName());
+            // If this is a declaration, there is no body within the LLVM model,
+            // thus we need to handle it differently.
+            Function* F = I->getCalledFunction();
+            if(!F) {
+                roout << "Function call calls null: " << *I << "\n";
+                roout.flush();
+                abort();
+            }
+            if(F->isDeclaration()) {
 
-            // If this is a hooked function
-            if(it != gctx->gen->hookedFunctions.end()) {
+                auto it = gctx->gen->hookedFunctions.find(F->getName());
 
-                // Print
-                out.reportNote("Handling " + F->getName().str());
+                // If this is a hooked function
+                if(it != gctx->gen->hookedFunctions.end()) {
 
-                assert(&I->getContext() == &F->getContext());
+                    // Print
+                    out.reportNote("Handling " + F->getName().str());
 
-                // Map the operands
-                std::vector<Value*> args;
-                for(unsigned int i = 0; i < I->getNumArgOperands(); ++i) {
-                    auto Arg = I->getArgOperand(i);
+                    assert(&I->getContext() == &F->getContext());
 
-                    Arg = vMap(gctx, Arg);
-                    args.push_back(Arg);
-                }
-                auto call = gctx->gen->builder.CreateCall(it->second, args);
-                setDebugLocation(call, __FILE__, __LINE__);
+                    // Map the operands
+                    std::vector<Value*> args;
+                    for(unsigned int i = 0; i < I->getNumArgOperands(); ++i) {
+                        auto Arg = I->getArgOperand(i);
 
-            } else if(F->isIntrinsic()) {
-            } else if(F->getName().equals("pthread_create")) {
-                // int pthread_create( pthread_t *thread
-                //                   , const pthread_attr_t *attr
-                //                   , void *(*start_routine) (void *)
-                //                   , void *arg);
-                //auto F = pins("pthread_create");
-                //assert(F);
+                        Arg = vMap(gctx, Arg);
+                        args.push_back(Arg);
+                    }
+                    auto call = gctx->gen->builder.CreateCall(it->second, args);
+                    setDebugLocation(call, __FILE__, __LINE__);
 
-                auto BBEnd = BasicBlock::Create(ctx, "pthread_create_if_pos_end", builder.GetInsertBlock()->getParent());
-                    auto threadsStarted_p = lts["threadsStarted"].getValue(gctx->svout);
+                } else if(F->isIntrinsic()) {
+                } else if(F->getName().equals("pthread_create")) {
+                    // int pthread_create( pthread_t *thread
+                    //                   , const pthread_attr_t *attr
+                    //                   , void *(*start_routine) (void *)
+                    //                   , void *arg);
+                    //auto F = pins("pthread_create");
+                    //assert(F);
 
-                // For every thread position, generate code that checks if it is
-                // free. If so, put the new thread there. Else, continue.
-                for(int tIdx = 0; tIdx < MAX_THREADS; ++tIdx) {
+                    auto BBEnd = BasicBlock::Create(ctx, "pthread_create_if_pos_end", builder.GetInsertBlock()->getParent());
+                        auto threadsStarted_p = lts["threadsStarted"].getValue(gctx->svout);
 
-                    // Check that PC == 0
-                    auto pc = lts["processes"][tIdx]["pc"].getValue(gctx->svout);
-                    pc = builder.CreateLoad(pc);
-                    auto cmp = builder.CreateICmpEQ(pc, ConstantInt::get(t_int, 0));
+                    // For every thread position, generate code that checks if it is
+                    // free. If so, put the new thread there. Else, continue.
+                    for(int tIdx = 0; tIdx < MAX_THREADS; ++tIdx) {
+
+                        // Check that PC == 0
+                        auto pc = lts["processes"][tIdx]["pc"].getValue(gctx->svout);
+                        pc = builder.CreateLoad(pc);
+                        auto cmp = builder.CreateICmpEQ(pc, ConstantInt::get(t_int, 0));
+
+                        // Setup if
+                        stringstream ss;
+                        ss << "pthread_create_if_pos_" << tIdx << "_is_free";
+                        llvmgen::If2 genIf(builder, cmp, ss.str(), BBEnd);
+
+                        // If that PC == 0, push stack frame
+                        genIf.startTrue();
+
+                        auto threadFunction = dyn_cast<Function>(I->getArgOperand(2));
+                        assert(threadFunction);
+
+                        GenerationContext gctx_copy = *gctx;
+                        gctx_copy.thread_id = tIdx;
+                        stack.pushStackFrame(&gctx_copy, *threadFunction, {I->getArgOperand(3)}, nullptr);
+
+                        // Update thread ID and threadsStarted
+                        auto tid_p = lts["processes"][tIdx]["tid"].getValue(gctx->svout);
+                        Value* threadsStarted = builder.CreateLoad(threadsStarted_p);
+                        threadsStarted = builder.CreateAdd(threadsStarted, ConstantInt::get(t_int, 1));
+                        builder.CreateStore(threadsStarted, tid_p);
+                        builder.CreateStore(threadsStarted, threadsStarted_p);
+
+                        auto registers = lts["processes"][tIdx]["r"].getValue(gctx->svout);
+                        auto tid_in_program = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
+                        tid_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_in_program, t_int64p);
+                        builder.CreateStore( builder.CreateIntCast(threadsStarted, t_int64, false)
+                                           , tid_in_program
+                                           );
+                        genIf.endTrue();
+
+                        // If it is false, do nothing, the next iteration will
+                        // generate the next if
+                        genIf.startFalse();
+
+                    }
+
+                    // For the last false-case, go to BBEnd
+                    builder.CreateCall( pins("printf")
+                                      , { generateGlobalString("ERROR: COULD NOT SPAWN MORE THREADS\n")
+                                        }
+                                      );
+                    auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
+                    builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
+                    builder.CreateBr(BBEnd);
+
+                    builder.SetInsertPoint(BBEnd);
+                } else if(F->getName().equals("pthread_join")) {
+                    // int pthread_join(pthread_t thread, void **value_ptr);
+                    //auto F = pins("pthread_join");
+                    //assert(F);
+
+                    //auto BBEnd = BasicBlock::Create(ctx, "pthread_join_if_pos_end", builder.GetInsertBlock()->getParent());
+
+                    ChunkMapper cm_tres = ChunkMapper(gctx, type_threadresults);
+
+                    auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+                    auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
+                    auto tres_p = lts["tres"].getValue(gctx->svout);
+                    auto results = cm_tres.generateGet(tres_p);
+                    auto results_data = generateChunkGetData(results);
+                    auto results_len = generateChunkGetLen(results);
 
                     // Setup if
-                    stringstream ss;
-                    ss << "pthread_create_if_pos_" << tIdx << "_is_free";
-                    llvmgen::If2 genIf(builder, cmp, ss.str(), BBEnd);
+                    //llvmgen::For genFor(builder, "pthread_join_result_loop");
 
-                    // If that PC == 0, push stack frame
-                    genIf.startTrue();
+                    // Set condition
+                    //genFor.setRange(results_data, generatePointerAdd(results_data, results_len), ConstantInt::get(t_int, 8));
 
-                    auto threadFunction = dyn_cast<Function>(I->getArgOperand(2));
-                    assert(threadFunction);
+    //                auto result = builder.CreateAlloca(t_int64);
+                    auto tid = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
+                    tid = builder.CreatePtrToInt(tid, t_int64);
 
-                    GenerationContext gctx_copy = *gctx;
-                    gctx_copy.thread_id = tIdx;
-                    stack.pushStackFrame(&gctx_copy, *threadFunction, {I->getArgOperand(3)}, nullptr);
+                    auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
+                    storeResult = builder.CreatePointerCast(storeResult, t_voidpp);
 
-                    // Update thread ID and threadsStarted
-                    auto tid_p = lts["processes"][tIdx]["tid"].getValue(gctx->svout);
-                    Value* threadsStarted = builder.CreateLoad(threadsStarted_p);
-                    threadsStarted = builder.CreateAdd(threadsStarted, ConstantInt::get(t_int, 1));
-                    builder.CreateStore(threadsStarted, tid_p);
-                    builder.CreateStore(threadsStarted, threadsStarted_p);
+                    auto llmc_list_find = pins("llmc_list_find");
+                    auto found = builder.CreateCall( llmc_list_find
+                                                   , { results_data
+                                                     , results_len
+                                                     , tid
+                                                     , storeResult
+                                                     }
+                                                   );
 
-                    auto registers = lts["processes"][tIdx]["r"].getValue(gctx->svout);
-                    auto tid_in_program = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-                    tid_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_in_program, t_int64p);
-                    builder.CreateStore( builder.CreateIntCast(threadsStarted, t_int64, false)
-                                       , tid_in_program
-                                       );
-                    genIf.endTrue();
+                    llvmgen::If genIf(builder, "pthread_join_result_not_found");
+                    genIf.setCond(builder.CreateICmpEQ(found, ConstantInt::get(found->getType(), 0)));
+                    auto BBTrue = genIf.getTrue();
+                    genIf.generate();
 
-                    // If it is false, do nothing, the next iteration will
-                    // generate the next if
-                    genIf.startFalse();
+                    builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
+                    builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
 
+
+                    builder.SetInsertPoint(genIf.getFinal());
+
+    //                type_threadresults
+
+                    // True case
+    //                auto BBTrue = genIf.getTrue();
+    //                builder.SetInsertPoint(BBTrue);
+    //
+    //                auto writeThreadResultTo = I->getArgOperand(1);
+    //                cm_tres ChunkMapper(*this, gctx->
+    //
+    //                // After the true case happened, go to BBEnd
+    //                genIf.setFinal(BBEnd);
+    //
+    //                // If it is false, do nothing, the next iteration will
+    //                // generate the next if
+    //                auto BBFalse = genIf.getTrue();
+    //
+    //                genIf.generate();
+    //                builder.SetInsertPoint(BBFalse);
+
+                } else {
+                    out.reportError("Unhandled function call: " + F->getName().str());
                 }
 
-                // For the last false-case, go to BBEnd
-                builder.CreateCall( pins("printf")
-                                  , { generateGlobalString("ERROR: COULD NOT SPAWN MORE THREADS\n")
-                                    }
-                                  );
-                auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
-                builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
-                builder.CreateBr(BBEnd);
-
-                builder.SetInsertPoint(BBEnd);
-            } else if(F->getName().equals("pthread_join")) {
-                // int pthread_join(pthread_t thread, void **value_ptr);
-                //auto F = pins("pthread_join");
-                //assert(F);
-
-                //auto BBEnd = BasicBlock::Create(ctx, "pthread_join_if_pos_end", builder.GetInsertBlock()->getParent());
-
-                ChunkMapper cm_tres = ChunkMapper(gctx, type_threadresults);
-
-                auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
-                auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
-                auto tres_p = lts["tres"].getValue(gctx->svout);
-                auto results = cm_tres.generateGet(tres_p);
-                auto results_data = generateChunkGetData(results);
-                auto results_len = generateChunkGetLen(results);
-
-                // Setup if
-                //llvmgen::For genFor(builder, "pthread_join_result_loop");
-
-                // Set condition
-                //genFor.setRange(results_data, generatePointerAdd(results_data, results_len), ConstantInt::get(t_int, 8));
-
-//                auto result = builder.CreateAlloca(t_int64);
-                auto tid = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-                tid = builder.CreatePtrToInt(tid, t_int64);
-
-                auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
-                storeResult = builder.CreatePointerCast(storeResult, t_voidpp);
-
-                auto llmc_list_find = pins("llmc_list_find");
-                auto found = builder.CreateCall( llmc_list_find
-                                               , { results_data
-                                                 , results_len
-                                                 , tid
-                                                 , storeResult
-                                                 }
-                                               );
-
-                llvmgen::If genIf(builder, "pthread_join_result_not_found");
-                genIf.setCond(builder.CreateICmpEQ(found, ConstantInt::get(found->getType(), 0)));
-                auto BBTrue = genIf.getTrue();
-                genIf.generate();
-
-                builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
-                builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
-
-
-                builder.SetInsertPoint(genIf.getFinal());
-
-//                type_threadresults
-
-                // True case
-//                auto BBTrue = genIf.getTrue();
-//                builder.SetInsertPoint(BBTrue);
-//
-//                auto writeThreadResultTo = I->getArgOperand(1);
-//                cm_tres ChunkMapper(*this, gctx->
-//
-//                // After the true case happened, go to BBEnd
-//                genIf.setFinal(BBEnd);
-//
-//                // If it is false, do nothing, the next iteration will
-//                // generate the next if
-//                auto BBFalse = genIf.getTrue();
-//
-//                genIf.generate();
-//                builder.SetInsertPoint(BBFalse);
-
+            // Otherwise, there is an LLVM body available, so it is modeled.
             } else {
-                out.reportError("Unhandled function call: " + F->getName().str());
+                std::vector<Value*> args;
+                for(unsigned int i=0; i < I->getNumArgOperands(); ++i) {
+                    args.push_back(I->getArgOperand(i));
+                }
+                stack.pushStackFrame(gctx, *F, args, I);
             }
-
-        // Otherwise, there is an LLVM body available, so it is modeled.
-        } else {
-            std::vector<Value*> args;
-            for(unsigned int i=0; i < I->getNumArgOperands(); ++i) {
-                args.push_back(I->getArgOperand(i));
-            }
-            stack.pushStackFrame(gctx, *F, args, I);
+            gctx->alteredPC = true;
         }
-        gctx->alteredPC = true;
     }
 
     void generateNextStateForInstruction(GenerationContext* gctx, BranchInst* I) {
@@ -2650,7 +2739,7 @@ public:
      */
     void writeTo(std::string s) {
         std::error_code EC;
-        raw_fd_ostream fdout(s, EC, sys::fs::OpenFlags::F_RW);
+        raw_fd_ostream fdout(s, EC, sys::fs::FA_Read | sys::fs::FA_Write);
         pinsModule->print(fdout, nullptr);
     }
 

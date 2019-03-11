@@ -55,6 +55,7 @@ include_directories(
 	${CMAKE_CURRENT_SOURCE_DIR}/include
 	${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include
 	${CMAKE_CURRENT_SOURCE_DIR}/libfrugi/include
+	${CMAKE_CURRENT_SOURCE_DIR}/../httest
 	${LTSMIN_INCLUDE_DIRS}
 )
 
