@@ -41,32 +41,48 @@ public:
     using InsertedState = typename STORAGE::InsertedState;
 public:
 
-    struct Context {
-        ModelCheckerInterface* mc;
-        void* model;
+    template<typename MODEL>
+    struct ContextBase {
+        MODEL* model;
         StateID sourceState;
 
         SimpleAllocator<StateSlot> allocator;
 
-        Context(ModelCheckerInterface* mc_, void* model): mc(mc_), model(model) {}
+        ContextBase(MODEL* model): model(model) {}
+
+        MODEL *getModel() const {
+            return model;
+        }
+
+        StateID getSourceState() const {
+            return sourceState;
+        }
     };
+
+    template<typename MODELCHECKER, typename MODEL>
+    struct ContextImpl: public ContextBase<MODEL> {
+        MODELCHECKER* mc;
+
+        SimpleAllocator<StateSlot> allocator;
+
+        ContextImpl(MODELCHECKER* mc_, MODEL* model): ContextBase<MODEL>(model), mc(mc_) {}
+    };
+
+    using Context = ContextImpl<void, void>;
 public:
 
-    virtual InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots) = 0;
-    virtual StateID newTransition(Context* ctx, size_t length, StateSlot* slots) = 0;
-    virtual StateID newTransition(Context* ctx, MultiDelta const& delta) = 0;
-
-    virtual StateID newTransition(Context* ctx, Delta const& delta) = 0;
-    virtual const FullState* getState(Context* ctx, StateID const& s) = 0;
-
-    virtual StateID newSubState(StateID const& stateID, Delta const& delta) = 0;
-    virtual const FullState* getSubState(Context* ctx, StateID const& s) = 0;
-
-    virtual Delta* newDelta(size_t offset, StateSlot* data, size_t len) = 0;
-    virtual void deleteDelta(Delta* d) = 0;
-    virtual bool newType(StateTypeID typeID, std::string const& name) = 0;
-    virtual StateTypeID newType(std::string const& name) = 0;
-    virtual bool setRootType(StateTypeID typeID) = 0;
+    InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots);
+    StateID newTransition(Context* ctx, size_t length, StateSlot* slots);
+    StateID newTransition(Context* ctx, MultiDelta const& delta);
+    StateID newTransition(Context* ctx, Delta const& delta);
+    const FullState* getState(Context* ctx, StateID const& s);
+    StateID newSubState(StateID const& stateID, Delta const& delta);
+    const FullState* getSubState(Context* ctx, StateID const& s);
+    Delta* newDelta(size_t offset, StateSlot* data, size_t len);
+    void deleteDelta(Delta* d);
+    bool newType(StateTypeID typeID, std::string const& name);
+    StateTypeID newType(std::string const& name);
+    bool setRootType(StateTypeID typeID);
 
 };
 

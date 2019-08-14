@@ -75,19 +75,19 @@ int rem;
 }
 
 extern "C" void GBsetInitialState(model_t ctx_, int* state) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setInitialState(state);
 }
 
 extern "C" void GBsetLTStype(model_t ctx_, lts_type_t ltstype) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setLength(ltstype->state_length*4);
 }
 
 extern "C" void GBsetDMInfo(model_t ctx_, matrix_t* dm) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setTransitionGroups(dm->rows);
 }
@@ -104,17 +104,17 @@ extern "C" {
 
 // new
 int pins_chunk_put(void* ctx_, int type, chunk c) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_put(ctx, type, c);
 }
 chunk pins_chunk_get(void* ctx_, int type, int idx) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_get(ctx, type, idx);
 }
 int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_cam(ctx, type, idx, offset, data, len);
 }
@@ -138,13 +138,13 @@ int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int le
 }
 
 extern "C" void GBsetNextStateLong(model_t ctx_, next_method_grey_t f) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setGetNext(f);
 }
 
 extern "C" void GBsetNextStateAll(model_t ctx_, next_method_black_t f) {
-    MCI::Context* ctx = reinterpret_cast<MCI::Context*>(ctx_);
+    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setGetNextAll(f);
 }

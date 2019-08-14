@@ -17,7 +17,7 @@ public:
     using FullState = typename Storage::FullState;
     using InsertedState = typename Storage::InsertedState;
     using Model = MODEL<MultiCoreModelCheckerSimple>;
-    using Context = typename ModelChecker<Model, STORAGE>::Context;
+    using Context = typename ModelChecker<Model, STORAGE>::template ContextImpl<MultiCoreModelCheckerSimple, MODEL<MultiCoreModelCheckerSimple<MODEL, STORAGE>>>;
 
     MultiCoreModelCheckerSimple(Model* m):  ModelChecker<Model, STORAGE>(m), _states(0) {
         _rootTypeID = 0;
@@ -25,7 +25,7 @@ public:
 
     void go() {
         _storage.init();
-        Context ctx(this, (void*)this->_m);
+        Context ctx(this, this->_m);
         StateID init = this->_m->getInitial(ctx);
         System::Timer timer;
 
@@ -36,7 +36,7 @@ public:
         for (int i = 0; i < 4; i++) {
             workers.push_back(std::thread([this]()
                                           {
-                                              Context ctx(this, (void*)this->_m);
+                                              Context ctx(this, this->_m);
                                               do {
                                                   StateID current = getNextQueuedState();
                                                   if(!current.exists()) break;
@@ -76,14 +76,14 @@ public:
         return result;
     }
 
-    virtual InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots) {
+    InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots) {
         auto r = _storage.insert(slots, length, typeID == _rootTypeID); // could make it 0?
 
         // Need to up state count, but newState is currently used for chunks as well
 
         return r;
     }
-    virtual StateID newTransition(typename ModelChecker<Model, STORAGE>::Context* ctx_, size_t length, StateSlot* slots) {
+    StateID newTransition(Context* ctx_, size_t length, StateSlot* slots) {
         StateID const& stateID = ctx_->sourceState;
 
         // the type ID could be extracted from stateID...
@@ -96,13 +96,13 @@ public:
         _transitions++;
         return insertedState.getState();
     }
-    virtual StateID newTransition(typename ModelChecker<Model, STORAGE>::Context* ctx_, MultiDelta const& delta) {
+    StateID newTransition(Context* ctx_, MultiDelta const& delta) {
         StateID const& stateID = ctx_->sourceState;
         _transitions++;
         abort();
         return 0;
     }
-    virtual StateID newTransition(typename ModelChecker<Model, STORAGE>::Context* ctx_, Delta const& delta) {
+    StateID newTransition(Context* ctx_, Delta const& delta) {
         StateID const& stateID = ctx_->sourceState;
         auto insertedState = _storage.insert(stateID, delta, true);
         updatable_lock lock(mtx);
@@ -114,7 +114,7 @@ public:
         return insertedState.getState();
     }
 
-    virtual FullState* getState(Context* ctx, StateID const& s) {
+    FullState* getState(Context* ctx, StateID const& s) {
         if constexpr(Storage::accessToStates()) {
             return _storage.get(s, true);
         } else {
@@ -125,12 +125,12 @@ public:
         }
     }
 
-    virtual StateID newSubState(StateID const& stateID, Delta const& delta) {
+    StateID newSubState(StateID const& stateID, Delta const& delta) {
         auto insertedState = _storage.insert(stateID, delta, false);
         return insertedState.getState();
     }
 
-    virtual const FullState* getSubState(Context* ctx, StateID const& s) {
+    const FullState* getSubState(Context* ctx, StateID const& s) {
         if constexpr(Storage::accessToStates()) {
             return _storage.get(s, false);
         } else {
@@ -141,27 +141,27 @@ public:
         }
     }
 
-//    virtual bool getState(StateSlot* dest, StateID const& s) {
+//    bool getState(StateSlot* dest, StateID const& s) {
 //        return _storage.get(dest, s, true);
 //    }
 
-    virtual bool newType(StateTypeID typeID, std::string const& name) {
+    bool newType(StateTypeID typeID, std::string const& name) {
         return false;
     }
 
-    virtual Delta* newDelta(size_t offset, StateSlot* data, size_t len) {
+    Delta* newDelta(size_t offset, StateSlot* data, size_t len) {
         return Delta::create(offset, data, len);
     }
 
-    virtual void deleteDelta(Delta* d) {
+    void deleteDelta(Delta* d) {
         return Delta::destroy(d);
     }
 
-    virtual StateTypeID newType(std::string const& name) {
+    StateTypeID newType(std::string const& name) {
         static size_t t = 1;
         return t++;
     }
-    virtual bool setRootType(StateTypeID typeID) {
+    bool setRootType(StateTypeID typeID) {
         _rootTypeID = typeID;
         return true;
     }
