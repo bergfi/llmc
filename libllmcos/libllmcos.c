@@ -10,8 +10,8 @@ typedef struct {
     __int64_t start;
 } __attribute((packed)) memory_info;
 
-void llmc_os_memory_init(model_t model, int data_typeno, __int32_t* ci_data) {
-    printf("llmc_os_memory_init: %p %i %p\n", model, data_typeno, ci_data);
+void llmc_os_memory_init(void* ctx, int data_typeno, __int32_t* ci_data) {
+    printf("llmc_os_memory_init: %p %i %p\n", ctx, data_typeno, ci_data);
     chunk c_data;
 
     const int START_BYTES = 8;
@@ -22,7 +22,7 @@ void llmc_os_memory_init(model_t model, int data_typeno, __int32_t* ci_data) {
 
     c_data.len = START_BYTES;
     c_data.data = a;
-    *ci_data = pins_chunk_put(model, data_typeno, c_data);
+    *ci_data = pins_chunk_put(ctx, data_typeno, c_data);
 
 }
 

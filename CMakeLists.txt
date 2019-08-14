@@ -6,6 +6,8 @@ set (llmc_VERSION_PATCH 0)
 
 include(CheckIncludeFile)
 
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+
 # Set build-specific flags
 set(CMAKE_C_FLAGS_DEBUG "-O0 -UNDEBUG -DYYDEBUG=1 ${CMAKE_CXX_FLAGS_DEBUG}")
 set(CMAKE_C_FLAGS_RELEASE "-O4 -DNDEBUG")
@@ -13,6 +15,7 @@ set(CMAKE_C_FLAGS_PROFILE "-pg")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -UNDEBUG -DYYDEBUG=1 ${CMAKE_CXX_FLAGS_DEBUG}")
 set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_PROFILE "-pg")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g ${CMAKE_CXX_FLAGS_RELEASE}")
 
 find_package(LLVM REQUIRED CONFIG)
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_FLAGS} -fno-rtti -fexceptions")
@@ -52,13 +55,16 @@ add_definitions(-Wall)
 
 include_directories(
 	${CMAKE_CURRENT_BINARY_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
 	${CMAKE_CURRENT_SOURCE_DIR}/include
+	${CMAKE_CURRENT_SOURCE_DIR}/dtree/dtree/include
 	${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include
 	${CMAKE_CURRENT_SOURCE_DIR}/libfrugi/include
 	${CMAKE_CURRENT_SOURCE_DIR}/../httest
 	${LTSMIN_INCLUDE_DIRS}
 )
 
+add_subdirectory(dtree)
 #add_subdirectory(yaml-cpp EXCLUDE_FROM_ALL)
 add_subdirectory(libfrugi EXCLUDE_FROM_ALL)
 #add_subdirectory(bcloader EXCLUDE_FROM_ALL)

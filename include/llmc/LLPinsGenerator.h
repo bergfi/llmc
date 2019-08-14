@@ -18,8 +18,10 @@
 #include <libfrugi/MessageFormatter.h>
 #include <libfrugi/FileSystem.h>
 #include <libfrugi/System.h>
+extern "C" {
 #include <ltsmin/pins.h>
 #include <ltsmin/pins-util.h>
+}
 
 #include <llmc/generation/ChunkMapper.h>
 #include <llmc/generation/GenerationContext.h>
@@ -302,6 +304,7 @@ public:
         tries.emplace_back(File(System::getBinaryLocation(), name));
         tries.emplace_back(File(std::string(CompileOptions::CMAKE_INSTALL_PREFIX) + "/share/llmc", name));
         tries.emplace_back(File(System::getBinaryLocation() + "/../libllmcos", name));
+        tries.emplace_back(File(System::getBinaryLocation() + "/../libllmc", name));
 
         File moduleFile;
         for(auto& f: tries) {
@@ -317,7 +320,7 @@ public:
             SMDiagnostic diag;
             auto module = llvm::parseAssemblyFile(moduleFile.getFilePath(), diag, ctx);
             if(!module) {
-                out.reportError("Error oading module " + name + ": " + moduleFile.getFilePath() + ":");
+                out.reportError("Error loading module " + name + ": " + moduleFile.getFilePath() + ":");
                 fflush(stdout);
                 printf("=======\n");
                 fflush(stdout);
@@ -337,6 +340,11 @@ public:
                            + moduleFile.getFilePath()
                            + "'"
                            );
+            for(auto& f: tries) {
+                if(f.exists()) {
+                    out.reportNote("Tried: " + f.getFilePath());
+                }
+            }
             assert(0 && "oh noes");
             return std::unique_ptr<Module>(nullptr);
         }
@@ -917,7 +925,9 @@ public:
         // Processes
         auto sv_processes = new SVTree("processes", "processes");
         for(int i=0; i < MAX_THREADS; ++i) {
-            auto sv_proc = new SVTree("", "process");
+            std::stringstream ss;
+            ss << "proc" << i;
+            auto sv_proc = new SVTree(ss.str(), "process");
             *sv_proc
                 << new SVTree("status", type_status)
                 << new SVTree("tid", type_tid)
@@ -1095,12 +1105,13 @@ public:
                     assert(t_statevector_size);
 
                     // Copy the SV into a local one
-                    builder.CreateMemCpy( gctx->svout
-                                        , gctx->svout->getPointerAlignment(pinsModule->getDataLayout())
-                                        , gctx->src
-                                        , src->getParamAlignment()
-                                        , t_statevector_size
-                                        );
+                    auto cpy = builder.CreateMemCpy( gctx->svout
+                                                   , gctx->svout->getPointerAlignment(pinsModule->getDataLayout())
+                                                   , gctx->src
+                                                   , src->getParamAlignment()
+                                                   , t_statevector_size
+                                                   );
+                    setDebugLocation(cpy, __FILE__, __LINE__);
 
                     // Update the destination PC
                     builder.CreateStore(ConstantInt::get(t_int, programLocations[ti->instructions.back()->getNextNode()]), dst_pc);
@@ -1222,7 +1233,8 @@ public:
 
             builder.SetInsertPoint(main_start);
             builder.CreateCall(pins("printf"), {generateGlobalString("main_start\n")});
-            builder.CreateMemCpy(gctx_copy.svout, gctx_copy.svout->getPointerAlignment(pinsModule->getDataLayout()), src, src->getParamAlignment(), t_statevector_size);
+            auto cpy = builder.CreateMemCpy(gctx_copy.svout, gctx_copy.svout->getPointerAlignment(pinsModule->getDataLayout()), src, src->getParamAlignment(), t_statevector_size);
+            setDebugLocation(cpy, __FILE__, __LINE__);
 //            for(int i = 0; i < MAX_THREADS; ++i) {
 //                gctx_copy.thread_id = i;
                 stack.pushStackFrame(&gctx_copy, *module->getFunction("main"), {}, nullptr);
@@ -1579,8 +1591,13 @@ public:
         if(valueRegisterIndex.count(I)) {
             strout << "r[" << valueRegisterIndex[I] << "] ";
         }
+        strout << "\n";
+        strout << I->getFunction()->getName();
+        strout << " ";
         strout << *I;
         llvmgen::BBComment(builder, "Instruction: " + strout.str());
+
+        builder.CreateCall(pins("printf"), {generateGlobalString("Instruction: " + strout.str() + "\n")});
 
         // Generate the action label
         ChunkMapper cm_action(gctx, type_action);
@@ -1735,11 +1752,9 @@ public:
                                                      , getCompileUnit()->getFile()
                                                      , 0
                                                      , d_getnext
-                                                     , false
-                                                     , true
                                                      , 0
                                                      , DINode::FlagPrototyped
-                                                     , false
+                                                     , DISubprogram::SPFlagDefinition
                                                      );
             F->setSubprogram(scope);
         }
@@ -2168,7 +2183,8 @@ public:
             if(I->getNumSuccessors() == 1) {
                 auto loc = gctx->gen->programLocations[&*I->getSuccessor(0)->begin()];
                 assert(loc);
-                gctx->gen->builder.CreateStore(ConstantInt::get(gctx->gen->t_int, loc), dst_pc);
+                auto s = gctx->gen->builder.CreateStore(ConstantInt::get(gctx->gen->t_int, loc), dst_pc);
+                setDebugLocation(s, __FILE__, __LINE__);
             } else {
                 roout << "Unconditional branch has more or less than 1 successor: " << *I << "\n";
                 roout.flush();
@@ -2181,10 +2197,21 @@ public:
             for(auto& phiNode: I->getSuccessor(succ)->phis()) {
                 // Assign the value to the PHI node
                 // associated with the origin-branch
-                builder.CreateStore(vMap(gctx, phiNode.getIncomingValueForBlock(I->getParent())), vReg(dst_reg, &phiNode));
+                auto c = builder.CreateStore(vMap(gctx, phiNode.getIncomingValueForBlock(I->getParent())), vReg(dst_reg, &phiNode));
+                setDebugLocation(c, __FILE__, __LINE__);
             }
         }
 
+    }
+
+    void printLocation(std::string const& file, size_t line) {
+        builder.CreateCall( pins("printf")
+                          , { generateGlobalString("now at %s:%u\n")
+                            , generateGlobalString(file)
+                            , ConstantInt::get(t_int, line)
+                            }
+                          );
+        fflush(stdout);
     }
 
 

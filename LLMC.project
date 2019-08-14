@@ -8,16 +8,20 @@
   <Reconciliation>
     <Regexes/>
     <Excludepaths>
-      <Path>../../../phdthesis/code/llmc/build/</Path>
+      <Path>build/</Path>
     </Excludepaths>
     <Ignorefiles/>
     <Extensions>
-      <![CDATA[cpp;c;h;hpp;xrc;wxcp;fbp;txt]]>
+      <![CDATA[*.cpp;*.c;*.h;*.hpp;*.xrc;*.wxcp;*.fbp;*.txt]]>
     </Extensions>
-    <Topleveldir>../llmc</Topleveldir>
+    <Topleveldir>/home/bergfi/development/phdthesis/code/llmc</Topleveldir>
   </Reconciliation>
   <VirtualDirectory Name="include">
+    <VirtualDirectory Name="mal">
+      <File Name="include/mal/mal.h"/>
+    </VirtualDirectory>
     <VirtualDirectory Name="llmc">
+      <File Name="include/llmc/xgraph.h"/>
       <VirtualDirectory Name="generation">
         <File Name="include/llmc/generation/LLVMLTSType.h"/>
         <File Name="include/llmc/generation/ProcessStack.h"/>
@@ -164,6 +168,29 @@
   <Dependencies Name="Debug"/>
   <Dependencies Name="Release"/>
   <VirtualDirectory Name="llmc">
+    <VirtualDirectory Name="pins">
+      <File Name="llmc/pins/pinsWrapper.cpp"/>
+    </VirtualDirectory>
+    <File Name="llmc/httest.cpp"/>
+    <File Name="llmc/hashtable.c"/>
+    <VirtualDirectory Name="include">
+      <VirtualDirectory Name="llmc">
+        <File Name="llmc/include/llmc/murmurhash.h"/>
+        <VirtualDirectory Name="pins">
+          <File Name="llmc/include/llmc/pins/pins.h"/>
+        </VirtualDirectory>
+        <VirtualDirectory Name="models">
+          <File Name="llmc/include/llmc/models/PINSModel.h"/>
+        </VirtualDirectory>
+        <File Name="llmc/include/llmc/model.h"/>
+        <File Name="llmc/include/llmc/mc.h"/>
+        <VirtualDirectory Name="storage">
+          <File Name="llmc/include/llmc/storage/dtree.h"/>
+          <File Name="llmc/include/llmc/storage/interface.h"/>
+          <File Name="llmc/include/llmc/storage/treedbs.h"/>
+        </VirtualDirectory>
+      </VirtualDirectory>
+    </VirtualDirectory>
     <File Name="llmc/CMakeLists.txt"/>
     <File Name="llmc/main.cpp"/>
     <File Name="llmc/ssgen.cpp"/>
@@ -226,7 +253,7 @@ unset CXX
         <CustomPostBuild/>
         <CustomPreBuild/>
       </AdditionalRules>
-      <Completion EnableCpp11="yes" EnableCpp14="yes">
+      <Completion EnableCpp11="no" EnableCpp14="no">
         <ClangCmpFlagsC/>
         <ClangCmpFlags/>
         <ClangPP/>

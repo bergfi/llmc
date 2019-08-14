@@ -2,15 +2,26 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <libfrugi/MessageFormatter.h>
+#include <libfrugi/Settings.h>
 #include <libfrugi/Shell.h>
 #include <libfrugi/System.h>
 #include <llmc/ll2pins.h>
 #include <llmc/ssgen.h>
+#include <llmc/modelcheckers/interface.h>
+#include <llmc/modelcheckers/multicoresimple.h>
+#include <llmc/modelcheckers/singlecore.h>
+#include <llmc/modelcheckers/multicore.h>
+#include <llmc/storage/interface.h>
+#include <llmc/storage/dtree.h>
 #include <sstream>
+#include <llmc/murmurhash.h>
+
+#include <llmc/models/PINSModel.h>
 
 #define VERBOSITY_SEARCHING 2
 
 using namespace llmc;
+using namespace libfrugi;
 
 bool findBinary(std::string const& name, MessageFormatter& messageFormatter, File& binary) {
     std::vector<File> results;
@@ -111,16 +122,71 @@ bool link(File const& bin_cc, File const& input, File const& output, MessageForm
 //bool dot(File const& bin_dot, File const& input, File const& output, MessageFormatter& out) {
 //}
 
-void go(std::string soFile) {
+template<typename T>
+struct HashCompareMurmur {
+    static constexpr uint64_t hashForZero = 0x7208f7fa198a2d81ULL;
+    static constexpr uint64_t seedForZero = 0xc6a4a7935bd1e995ULL*8ull;
 
-    auto model = model::getPINS(soFile);
+    __attribute__((always_inline))
+    bool equal( const T& j, const T& k ) const {
+        return j == k;
+    }
+
+    __attribute__((always_inline))
+    size_t hash( const T& k ) const {
+        return MurmurHash64(&k, 8, seedForZero);
+    }
+};
+
+void goOld(std::string soFile) {
+    model* model = model_pins_so::get(soFile);
     assert(model);
     ssgen_st ss(model);
-
     ss.go();
 }
 
+template<typename Storage, template <template<typename> typename, typename> typename ModelChecker>
+void goPINS(std::string soFile) {
+
+    PINSModel<ModelChecker<PINSModel, Storage>>* model = PINSModel<ModelChecker<PINSModel, Storage>>::get(soFile);
+    ModelChecker<PINSModel, Storage> mc(model);
+    mc.go();
+}
+
+template<template <template<typename> typename, typename> typename ModelChecker>
+void goSelectStorage(std::string fileName) {
+    Settings& settings = Settings::global();
+
+    if(settings["storage"].asString() == "hashmap") {
+        goPINS<CrappyStorage, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "dtree") {
+        goPINS<DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+    } else {
+    }
+}
+
+void go(std::string fileName) {
+    Settings& settings = Settings::global();
+
+    if(settings["mc"].asString() == "multicore_simple") {
+        goSelectStorage<MultiCoreModelCheckerSimple>(fileName);
+    } else if(settings["mc"].asString() == "multicore_bitbetter") {
+        goSelectStorage<MultiCoreModelChecker>(fileName);
+    } else if(settings["mc"].asString() == "singlecore_simple") {
+        goSelectStorage<SingleCoreModelChecker>(fileName);
+    } else {
+    }
+}
+
 int main(int argc, char* argv[]) {
+
+    Settings& settings = Settings::global();
+
+    settings["threads"] = 0;
+    settings["mc"] = "singlecore_simple";
+    settings["storage"] = "hashmap";
+    settings["storage.stats"] = 0;
+    settings["storage.bars"] = 128;
 
     MessageFormatter out(std::cout);
     out.setAutoFlush(true);
@@ -145,12 +211,38 @@ int main(int argc, char* argv[]) {
     // init libfrugi
     System::init(argc, argv);
 
-    if(argc<2) {
+    int c = 0;
+    while ((c = getopt(argc, argv, "m:s:t:-:")) != -1) {
+//    while ((c = getopt_long(argc, argv, "i:d:s:t:T:p:-:", long_options, &option_index)) != -1) {
+        switch(c) {
+            case 't':
+                if(optarg) {
+                    settings["threads"] = std::stoi(optarg);
+                }
+                break;
+            case 'm':
+                if(optarg) {
+                    settings["mc"] = std::string(optarg);
+                }
+                break;
+            case 's':
+                if(optarg) {
+                    settings["storage"] = std::string(optarg);
+                }
+                break;
+            case '-':
+                settings.insertKeyValue(optarg);
+        }
+    }
+
+    int htindex = optind;
+
+    if(htindex >= argc) {
         out.reportError("No input file specified");
         exit(-1);
     }
 
-    File input(System::getArgument(1));
+    File input(System::getArgument(htindex));
     input.fix();
     File output_ll = input.newWithExtension("pins.ll");
     File output_o = input.newWithExtension("pins.o");
@@ -219,6 +311,9 @@ int main(int argc, char* argv[]) {
 //    }
 
     go(output_so.getFileRealPath());
+
+    std::cout << "Model checker:   " << settings["mc"].asString() << std::endl;
+    std::cout << "Storage:         " << settings["storage"].asString() << std::endl;
 
     return 0;
 }

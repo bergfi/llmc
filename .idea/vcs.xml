@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/dtree" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libfrugi" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libfrugiold" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/tests/svcomp" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/yaml-cpp" vcs="Git" />
+  </component>
+</project>
