@@ -84,7 +84,7 @@ public:
      * @param ch_len To which the Size of the chunk will be assigned
      * @return Copied chunk
      */
-    Value* generateGetAndCopy(Value* chunkid, Value*& ch_len);
+    Value* generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* appendSize = nullptr);
 
     /**
      * @brief Clones the chunk specified by @c chunkid, with the specified delta.
@@ -122,7 +122,7 @@ public:
      * @param len The length of the data to append
      * @return The chunkID of the cloned chunk with the change
      */
-    Value* generateCloneAndAppend(Value* chunkid, Value* data, Value* len);
+    Value* generateCloneAndAppend(Value* chunkid, Value* data, Value* len, Value** oldLength = nullptr);
 
     /**
      * @brief Clone the chunk @c chunkid but with @c data appended to it.

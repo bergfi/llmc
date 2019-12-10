@@ -270,6 +270,7 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
 
     // When there is no frame to be popped
     {
+
         // Set the PC of this thread to terminated
         builder.SetInsertPoint(&*BBFalse->getFirstInsertionPt());
         gen->builder.CreateStore(ConstantInt::get(gen->t_int, 0), dst_pc);
@@ -303,6 +304,13 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             // Set the result of the tuple
             auto retValVoidP = builder.CreateIntToPtr(retVal, gen->t_voidp);
             gen->builder.CreateStore(retValVoidP, newTres_res);
+
+            builder.CreateCall( gen->pins("printf")
+                    , { gen->generateGlobalString("return a value %x %u\n")
+                      , tid
+                      , retVal
+                      }
+                    );
 
             // Append the new tuple to the list of tuples
             ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);

@@ -4,28 +4,46 @@
 #include <assertions.h>
 
 #include <cstring>
-#include <unordered_map>
 
 #include "../murmurhash.h"
+
+namespace llmc::storage {
 
 template<typename StateSlot>
 struct FullStateData {
 
+    static const size_t OFFSET_TYPE = 0;
+    static const size_t BITS_TYPE = 24;
+    static const size_t MASK_TYPE = ((1ULL << BITS_TYPE) - 1) << OFFSET_TYPE;
+
+    static const size_t MASK_EXTERNALDATA = (1ULL << 31);
+
+    static FullStateData* createExternal(bool isRoot, size_t length, const StateSlot* data) {
+        FullStateData* fsd = (FullStateData*)malloc(sizeof(FullStateData));
+        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE) | MASK_EXTERNALDATA;
+        fsd->_length = length;
+        fsd->_externalData = data;
+        return fsd;
+    }
+
     static FullStateData* create(bool isRoot, size_t length, StateSlot* data) {
-        FullStateData* fsd = (FullStateData*)malloc(sizeof(FullStateData<StateSlot>) + length * sizeof(StateSlot));
-        fsd->_length = length | (((size_t)isRoot) << 63);
+        FullStateData* fsd = (FullStateData*)malloc(sizeof(_header) + length * sizeof(StateSlot));
+        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
+        fsd->_length = length;
         memcpy(fsd->_data, data, length * sizeof(StateSlot));
         return fsd;
     }
 
     static FullStateData* create(bool isRoot, size_t length) {
-        FullStateData* fsd = (FullStateData*)malloc(sizeof(FullStateData<StateSlot>) + length * sizeof(StateSlot));
-        fsd->_length = length | (((size_t)isRoot) << 63);
+        FullStateData* fsd = (FullStateData*)malloc(sizeof(_header) + length * sizeof(StateSlot));
+        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
+        fsd->_length = length;
         return fsd;
     }
 
     static FullStateData* create(FullStateData* fsd, bool isRoot, size_t length) {
-        fsd->_length = length | (((size_t)isRoot) << 63);
+        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
+        fsd->_length = length;
         return fsd;
     }
 
@@ -34,7 +52,7 @@ struct FullStateData {
     }
 
     size_t getLength() const {
-        return _length & 0x7FFFFFFFFFFFFFFFULL;
+        return _length;
     }
 
     size_t getLengthInBytes() const {
@@ -42,26 +60,35 @@ struct FullStateData {
     }
 
     const StateSlot* getData() const {
-        return _data;
+        return _misc & MASK_EXTERNALDATA ? _externalData : _data;
     }
 
-    StateSlot* getData() {
+    const char* getCharData() const {
+        return (char*)getData();
+    }
+
+    StateSlot* getDataToModify() {
+        assert(!(_misc & MASK_EXTERNALDATA));
         return _data;
     }
 
     bool isRoot() const {
-        return _length >> 63;
+        return !(_misc & MASK_TYPE);
     }
 
     bool equals(FullStateData const& other) const {
-        if(_length != other._length) return false;
-        auto r = !memcmp((void*)_data, (void*)other._data, getLength() * sizeof(StateSlot));
+        if(_header != other._header) return false;
+
+        auto thisData = _misc & MASK_EXTERNALDATA ? (void*)_externalData : (void*)_data;
+        auto otherData = other._misc & MASK_EXTERNALDATA ? (void*)other._externalData : (void*)other._data;
+
+        auto r = !memcmp(thisData, otherData, getLength() * sizeof(StateSlot));
         //LLMC_DEBUG_LOG() << "Compared " << *this << " to " << other << ": " << r << std::endl;
         return r;
     }
 
     size_t hash() const {
-        return MurmurHash64((void*)this, sizeof(FullStateData<StateSlot>) + getLength(), 0);
+        return _header ^ MurmurHash64(_misc & MASK_EXTERNALDATA ? _externalData : _data, getLength(), 0);
     }
 
     friend std::ostream& operator<<(std::ostream& os, FullStateData<StateSlot> const& fsd) {
@@ -80,9 +107,20 @@ struct FullStateData {
     }
 
 private:
-    size_t _length; // in nr of StateSlots
-    StateSlot _data[0];
+    union {
+        struct {
+            uint32_t _length; // in nr of StateSlots
+            uint32_t _misc;
+        };
+        size_t _header;
+    };
+    union {
+        StateSlot _data[0];
+        const StateSlot* _externalData;
+    };
 };
+
+//static_assert(sizeof(FullStateData<unsigned int>) == sizeof(size_t));
 
 class StorageInterface {
 public:
@@ -143,12 +181,21 @@ public:
 
     struct Delta {
 
+        static Delta& create(Delta* buffer, size_t offset, StateSlot* data, size_t len) {
+            buffer->_offset = offset;
+            buffer->_length = len;
+            memcpy(buffer->_data, data, len * sizeof(StateSlot));
+            return *buffer;
+        }
+
         static Delta* create(size_t offset, StateSlot* data, size_t len) {
             Delta* d = (Delta*)malloc(sizeof(Delta) + len * sizeof(StateSlot));
-            d->_offset = offset;
-            d->_length = len;
-            memcpy(d->_data, data, len * sizeof(StateSlot));
+            create(d, offset, data, len);
             return d;
+        }
+
+        static Delta& create(Delta* buffer, size_t offset, size_t len) {
+            return Delta::create(buffer, offset, buffer->_data, len);
         }
 
         static void destroy(Delta* d) {
@@ -185,161 +232,15 @@ public:
         size_t length;
     };
 
-    StateID find(FullState* state);
-    StateID find(StateSlot* state, size_t length, bool isRoot);
-//    InsertedState insertOverwrite(FullState* state);
-//    InsertedState insertOverwrite(StateSlot* state, size_t length, bool isRoot);
-    InsertedState insert(FullState* state);
-    InsertedState insert(StateSlot* state, size_t length, bool isRoot);
-    InsertedState insert(StateID const& stateID, Delta const& delta);
-    FullState* get(StateID id);
-    void printStats();
+//    StateID find(FullState* state);
+//    StateID find(StateSlot* state, size_t length, bool isRoot);
+////    InsertedState insertOverwrite(FullState* state);
+////    InsertedState insertOverwrite(StateSlot* state, size_t length, bool isRoot);
+//    InsertedState insert(FullState* state);
+//    InsertedState insert(StateSlot* state, size_t length, bool isRoot);
+//    InsertedState insert(StateID const& stateID, Delta const& delta);
+//    FullState* get(StateID id);
+//    void printStats();
 };
 
-namespace std {
-
-    template <typename StateSlot>
-    struct hash<FullStateData<StateSlot>*>
-    {
-        std::size_t operator()(FullStateData<StateSlot>* const& fsd) const {
-            return fsd->hash();
-        }
-    };
-
-    template <typename StateSlot>
-    struct equal_to<FullStateData<StateSlot>*> {
-        constexpr bool operator()( FullStateData<StateSlot>* const& lhs, FullStateData<StateSlot>* const& rhs ) const {
-            return lhs->equals(*rhs);
-        }
-    };
-
-    template<>
-    struct hash<StorageInterface::StateID>
-    {
-        std::size_t operator()(StorageInterface::StateID const& s) const {
-            return std::hash<uint64_t>()(s.getData());
-        }
-    };
-
-    template<>
-    struct equal_to<StorageInterface::StateID> {
-        constexpr bool operator()( StorageInterface::StateID const& lhs, StorageInterface::StateID const& rhs ) const {
-            return lhs.getData() == rhs.getData();
-        }
-    };
-
-//template <typename StateSlot>
-//ostream& operator<<(ostream& os, FullStateData<StateSlot> const& fsd) {
-//    os << "[";
-//    os << fsd.getLength();
-//    os << ",";
-//    os << fsd.hash();
-//    os << ",";
-//    const StateSlot* s = fsd.getData();
-//    const StateSlot* end = s + fsd.getLength();
-//    for(; s < end; s++) {
-//        os << s;
-//    }
-//    os << "]" << std::endl;
-//    return os;
-//}
-
-}
-
-class CrappyStorage: public StorageInterface {
-public:
-
-    CrappyStorage(): _nextID(1), _store(), _storeID() {
-
-    }
-
-    ~CrappyStorage() {
-        for(auto& s: _store) {
-            free(s.first);
-        }
-    }
-
-    void init() {
-        _store.reserve(1U << 24);
-        _storeID.reserve(1U << 24);
-    }
-
-    using StateSlot = StorageInterface::StateSlot;
-    using StateID = StorageInterface::StateID;
-    using StateTypeID = StorageInterface::StateTypeID;
-    using Delta = StorageInterface::Delta;
-    using MultiDelta = StorageInterface::MultiDelta;
-
-    StateID find(FullState* state) {
-        auto it = _store.find(state);
-        if(it == _store.end()) {
-            return StateID::NotFound();
-        }
-        return it->second;
-    }
-    StateID find(StateSlot* state, size_t length, bool isRoot) {
-        auto fsd = FullStateData<StateSlot>::create(isRoot, length, state);
-        auto r = find(fsd);
-        FullStateData<StateSlot>::destroy(fsd);
-        return r;
-    }
-//    InsertedState insertOverwrite(FullState* state) {
-//        auto id = _nextID;
-//        auto r = _store.insert_or_assign(state, id);
-//        return {r.first->second, r.second};
-//    }
-//    InsertedState insertOverwrite(StateSlot* state, size_t length, bool isRoot) {
-//        return insert(FullStateData<StateSlot>::create(isRoot, length, state));
-//    }
-    InsertedState insert(FullState* state) {
-        auto id = _nextID;
-        auto r = _store.insert({state, id});
-        if(r.second) {
-            ++_nextID;
-            _storeID[id] = state;
-            //LLMC_DEBUG_LOG() << "Inserted state " << state << " -> " << id << std::endl;
-        } else {
-            //LLMC_DEBUG_LOG() << "Inserted state " << state << " -> " << r.first->second << "(already inserted)" << std::endl;
-        }
-        return InsertedState(r.first->second, r.second);
-    }
-    InsertedState insert(StateSlot* state, size_t length, bool isRoot) {
-        return insert(FullStateData<StateSlot>::create(isRoot, length, state));
-    }
-    InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
-        FullState* old = get(stateID, isRoot);
-        LLMC_DEBUG_ASSERT(old);
-        LLMC_DEBUG_ASSERT(old->getLength());
-
-        size_t newLength = std::max(old->getLength(), delta.getLength() + delta.getOffset());
-
-        StateSlot buffer[newLength];
-
-        memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
-        memcpy(buffer+delta.getOffset(), delta.getData(), delta.getLength() * sizeof(StateSlot));
-
-        return insert(buffer, newLength, isRoot);
-
-    }
-
-    FullState* get(StateID id, bool isRoot) {
-        auto it = _storeID.find(id);
-        if(it == _storeID.end()) {
-            abort();
-            return nullptr;
-        }
-        return it->second;
-    }
-
-    void printStats() {
-    }
-
-    static bool constexpr accessToStates() {
-        return true;
-    }
-
-private:
-    size_t _nextID;
-    std::unordered_map<FullState*, StateID> _store;
-    std::unordered_map<StateID, FullState*> _storeID;
-};
+} // namespace llmc::storage

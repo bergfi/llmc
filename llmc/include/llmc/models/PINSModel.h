@@ -5,6 +5,18 @@
 #include <llmc/model.h>
 #include <llmc/pins/pins.h>
 
+struct lts_label {
+    std::string name;
+    int type;
+};
+
+struct lts_type_s {
+    std::vector<lts_label> state_description;
+    std::vector<lts_label> state_label;
+    std::vector<lts_label> edge_label;
+    std::vector<std::string> type_db;
+};
+
 class PINSModelBase {
 public:
     typedef void(*model_init_t)(void* model);
@@ -12,7 +24,6 @@ public:
     //typedef int(*next_method_black_t)(void* self,void*src,void* cb,void*user_context);
 public:
     PINSModelBase(void* handle): _init(nullptr), _handle(handle) {
-        std::cout << std::endl << "PINSModel() " << &_init << ", " << _init << std::endl;
         _pins_model_init = reinterpret_cast<decltype(_pins_model_init)>(dlsym(_handle, "pins_model_init"));
         //_pins_getnextall = reinterpret_cast<decltype(_pins_getnextall)>(dlsym(_handle, "pins_getnextall"));
         assert(!_init);
@@ -49,9 +60,17 @@ public:
 
     }
 
-    void setLength(int length) {
-        printf("SET LENGTH %i\n", length); fflush(stdout);
-        _length = length;
+    void setType(lts_type_s* ltsType) {
+        _ltsType = ltsType;
+        printf("SET LENGTH %zu\n", ltsType->state_description.size()); fflush(stdout);
+        _length = ltsType->state_description.size();
+
+        for(size_t i = 0; i < ltsType->edge_label.size(); ++i) {
+            auto& label = ltsType->edge_label[i];
+            if(label.name == "action") {
+                _labelIndex = i;
+            }
+        }
     }
 
     int getLength() const { return _length; }
@@ -74,6 +93,7 @@ public:
     }
 
 protected:
+    lts_type_s* _ltsType;
     int _length;
     int _tgroups;
     uint32_t* _init;
@@ -82,10 +102,12 @@ protected:
     next_method_black_t _pins_getnextall;
     void* _handle;
     TransitionCB _reportTransition_cb;
+    std::string _labelName = "action";
+    size_t _labelIndex = -1;
 };
 
 template<typename MODELCHECKER>
-class PINSModel: public PINSModelBase, Model<MODELCHECKER> {
+class PINSModel: public PINSModelBase, VModel<llmc::storage::StorageInterface> {
 public:
     static PINSModel* get(std::string const& filename) {
         auto handle = dlopen(filename.c_str(), RTLD_LAZY);
@@ -100,7 +122,31 @@ public:
         return new PINSModel(handle);
     }
 
+    using TransitionInfo = typename Model::TransitionInfo;
+
 public:
+
+//    struct VPINSTransitionInfo: public VTransitionInfo {
+//        TransitionInfo operator()(typename MODELCHECKER::Context* ctx) const {
+//            return getTransitionInfo(ctx, pinsTransitionInfo);
+//        }
+//
+//        VPINSTransitionInfo(const transition_info* pinsTransitionInfo): pinsTransitionInfo(pinsTransitionInfo) {
+//        }
+//
+//        const transition_info* pinsTransitionInfo;
+//    };
+
+//    struct PINSTransitionInfo: public TransitionInfoUnExpanded {
+//        TransitionInfo operator()(typename MODELCHECKER::Context* ctx) const {
+//            return getTransitionInfo(ctx, pinsTransitionInfo);
+//        }
+//
+//        VPINSTransitionInfo(const transition_info* pinsTransitionInfo): pinsTransitionInfo(pinsTransitionInfo) {
+//        }
+//
+//        const transition_info* pinsTransitionInfo;
+//    };
 
     PINSModel(void* handle): PINSModelBase(handle) {
     }
@@ -108,7 +154,9 @@ public:
     ~PINSModel() {
     }
 
-    size_t getNextAll(typename MODELCHECKER::StateID const& s, typename MODELCHECKER::Context& ctx) {
+    size_t getNextAll(typename MODELCHECKER::StateID const& s, typename MODELCHECKER::Context& ctx) override {
+
+        printf("getNextAll()\n");
 
         const typename MODELCHECKER::FullState* state = ctx.mc->getState(&ctx, s);
         //_pins_getnextall();
@@ -120,7 +168,7 @@ public:
         }
         return 0;
     }
-    typename MODELCHECKER::StateID getInitial(typename MODELCHECKER::Context& ctx) {
+    typename MODELCHECKER::StateID getInitial(typename MODELCHECKER::Context& ctx) override {
         assert(_pins_model_init);
         _pins_model_init((void*)&ctx);
         assert(this->_init);
@@ -170,7 +218,29 @@ public:
 
     static void reportTransitionCB(void* ctx_, transition_info* tinfo, int* state, int* changes) {
         typename MODELCHECKER::Context* ctx = reinterpret_cast<typename MODELCHECKER::Context*>(ctx_);
-        ctx->mc->newTransition(ctx, ((PINSModel*)ctx->model)->getLength(), (typename MODELCHECKER::StateSlot*)state);
+        TransitionInfoUnExpanded t = TransitionInfoUnExpanded::construct(tinfo);
+        ctx->mc->newTransition( ctx
+                              , ((PINSModel*)ctx->model)->getLength()
+                              , (typename MODELCHECKER::StateSlot*)state
+                              , t
+                              );
+    }
+
+    TransitionInfo getTransitionInfo(typename MODELCHECKER::Context* ctx, TransitionInfoUnExpanded& tinfo_) {
+        auto tinfo = tinfo_.get<transition_info*>();
+        printf("Hello %p %p %x\n", tinfo, tinfo->labels, ctx->model->_labelIndex); fflush(stdout);
+        if(tinfo && tinfo->labels) {
+            auto labelIndex = ctx->model->_labelIndex;
+            if(labelIndex < ctx->model->_ltsType->edge_label.size()) {
+                auto fsd = ctx->mc->getSubState(ctx, tinfo->labels[labelIndex]);
+                return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
+            }
+        }
+        return TransitionInfo();
+    }
+
+    llmc::statespace::Type* getStateVectorType() override {
+        return nullptr;
     }
 
 protected:

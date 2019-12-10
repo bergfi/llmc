@@ -11,12 +11,17 @@
 #include <llmc/modelcheckers/multicoresimple.h>
 #include <llmc/modelcheckers/singlecore.h>
 #include <llmc/modelcheckers/multicore.h>
+#include <llmc/statespace/listener.h>
 #include <llmc/storage/interface.h>
 #include <llmc/storage/dtree.h>
+#include <llmc/storage/stdmap.h>
+#include <llmc/storage/cchm.h>
+#include <llmc/storage/treedbs.h>
 #include <sstream>
 #include <llmc/murmurhash.h>
 
 #include <llmc/models/PINSModel.h>
+#include <libllmc/LLVMModel.h>
 
 #define VERBOSITY_SEARCHING 2
 
@@ -145,22 +150,40 @@ void goOld(std::string soFile) {
     ss.go();
 }
 
-template<typename Storage, template <template<typename> typename, typename> typename ModelChecker>
+template<typename Storage, template <typename, typename,template<typename,typename> typename> typename ModelChecker>
 void goPINS(std::string soFile) {
 
-    PINSModel<ModelChecker<PINSModel, Storage>>* model = PINSModel<ModelChecker<PINSModel, Storage>>::get(soFile);
-    ModelChecker<PINSModel, Storage> mc(model);
+    ofstream f;
+    f.open("out.dot", std::fstream::trunc);
+
+//    PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>* model = PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>::get(soFile);
+//    llmc::statespace::DotPrinter< ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>
+//                                , PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>
+//                                > printer(f);
+//    ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter> mc(model, printer);
+
+    VModel<llmc::storage::StorageInterface>* model = new LLVMModel();
+    llmc::statespace::DotPrinter< ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>
+                                , VModel<llmc::storage::StorageInterface>
+                                > printer(f);
+    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
+
     mc.go();
+    f.close();
 }
 
-template<template <template<typename> typename, typename> typename ModelChecker>
+template<template <typename, typename, template<typename,typename> typename> typename ModelChecker>
 void goSelectStorage(std::string fileName) {
     Settings& settings = Settings::global();
 
-    if(settings["storage"].asString() == "hashmap") {
-        goPINS<CrappyStorage, ModelChecker>(fileName);
+    if(settings["storage"].asString() == "stdmap") {
+        goPINS<llmc::storage::StdMap, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "cchm") {
+        goPINS<llmc::storage::cchm, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "treedbs") {
+        goPINS<llmc::storage::TreeDBSStorage, ModelChecker>(fileName);
     } else if(settings["storage"].asString() == "dtree") {
-        goPINS<DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+        goPINS<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
     } else {
     }
 }

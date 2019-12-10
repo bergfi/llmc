@@ -65,18 +65,32 @@ Value* ChunkMapper::generatePutAt(Value* len, Value* data, int chunkID) {
     return vChunkID;
 }
 
-Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len) {
+Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* appendSize) {
     Value* ch = generateGet(chunkid);
     Value* ch_data = gctx->gen->generateChunkGetData(ch);
     ch_len = gctx->gen->generateChunkGetLen(ch);
-    auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, ch_len);
-    gctx->gen->builder.CreateMemCpy( copy
-                                   , copy->getPointerAlignment(gctx->gen->pinsModule->getDataLayout())
-                                   , ch_data
-                                   , ch_data->getPointerAlignment(gctx->gen->pinsModule->getDataLayout())
-                                   , ch_len
-                                   );
-    return copy;
+    if(appendSize) {
+        auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, gctx->gen->builder.CreateAdd(appendSize, ch_len));
+        gctx->gen->builder.CreateMemCpy(copy, copy->getPointerAlignment(gctx->gen->pinsModule->getDataLayout()),
+                                        ch_data, ch_data->getPointerAlignment(gctx->gen->pinsModule->getDataLayout()),
+                                        ch_len
+        );
+
+        gctx->gen->builder.CreateMemSet( gctx->gen->builder.CreateGEP(copy, {ch_len})
+                , ConstantInt::get(gctx->gen->t_int8, 0)
+                , appendSize
+                , 1
+        );
+
+        return copy;
+    } else {
+        auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, ch_len);
+        gctx->gen->builder.CreateMemCpy(copy, copy->getPointerAlignment(gctx->gen->pinsModule->getDataLayout()),
+                                        ch_data, ch_data->getPointerAlignment(gctx->gen->pinsModule->getDataLayout()),
+                                        ch_len
+        );
+        return copy;
+    }
 }
 
 Value* ChunkMapper::generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len, Value*& newLength) {
@@ -100,10 +114,11 @@ Value* ChunkMapper::generateCloneAndModify(Value* chunkid, Value* offset, Value*
                                  );
 }
 
-Value* ChunkMapper::generateCloneAndAppend(Value* chunkid, Value* data, Value* len) {
+Value* ChunkMapper::generateCloneAndAppend(Value* chunkid, Value* data, Value* len, Value** oldLength) {
     Value* ch = generateGet(chunkid);
     Value* chData = gctx->gen->generateChunkGetData(ch);
     Value* chLen = gctx->gen->generateChunkGetLen(ch);
+    if(oldLength) *oldLength = chLen;
     Value* newLength = gctx->gen->builder.CreateAdd(chLen,len);
     auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, newLength);
     gctx->gen->builder.CreateMemCpy( copy

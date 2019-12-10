@@ -1,7 +1,9 @@
 #pragma once
 
-template<template<typename> typename MODEL, typename STORAGE>
-class MultiCoreModelCheckerSimple: public ModelChecker<MODEL<MultiCoreModelCheckerSimple<MODEL, STORAGE>>, STORAGE> {
+#include <llmc/statespace/listener.h>
+
+template<typename Model, typename STORAGE, template<typename,typename> typename LISTENER=llmc::statespace::VoidPrinter>
+class MultiCoreModelCheckerSimple: public VModelChecker<llmc::storage::StorageInterface> {
 public:
     using mutex_type = std::shared_timed_mutex;
     using read_only_lock  = std::shared_lock<mutex_type>;
@@ -16,18 +18,28 @@ public:
     using MultiDelta = typename Storage::MultiDelta;
     using FullState = typename Storage::FullState;
     using InsertedState = typename Storage::InsertedState;
-    using Model = MODEL<MultiCoreModelCheckerSimple>;
-    using Context = typename ModelChecker<Model, STORAGE>::template ContextImpl<MultiCoreModelCheckerSimple, MODEL<MultiCoreModelCheckerSimple<MODEL, STORAGE>>>;
+    using Listener = LISTENER<MultiCoreModelCheckerSimple, Model>;
+    //using Context = typename ModelChecker<Model, StorageInterface>::template ContextImpl<MCI, Model>;
+    struct Context: public VContext<llmc::storage::StorageInterface> {
+        SimpleAllocator<StateSlot> allocator;
+        Context(VModelChecker<llmc::storage::StorageInterface>* mc, VModel<llmc::storage::StorageInterface>* model): VContext<llmc::storage::StorageInterface>(mc, model) {}
+    };
 
-    MultiCoreModelCheckerSimple(Model* m):  ModelChecker<Model, STORAGE>(m), _states(0) {
+    MultiCoreModelCheckerSimple(Model* m):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0) {
+        _rootTypeID = 0;
+    }
+
+    MultiCoreModelCheckerSimple(Model* m, Listener& listener):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _listener(listener) {
         _rootTypeID = 0;
     }
 
     void go() {
         _storage.init();
         Context ctx(this, this->_m);
-        StateID init = this->_m->getInitial(ctx);
+        StateID init = this->_m->getInitial(&ctx).getData();
         System::Timer timer;
+
+        _states++;
 
         stateQueueNew.push_back(init);
 
@@ -41,17 +53,17 @@ public:
                                                   StateID current = getNextQueuedState();
                                                   if(!current.exists()) break;
                                                   do {
-                                                      ctx.sourceState = current;
+                                                      ctx.sourceState = current.getData();
                                                       ctx.allocator.clear();
-                                                      this->_m->getNextAll(current, ctx);
+                                                      this->_m->getNextAll(ctx.sourceState, &ctx);
                                                       current = StateID::NotFound();
                                                   } while(current.exists());
                                                   size_t statesLocal = _states;
-                                                  if(statesLocal >= 100000) {
-                                                      printf("aborting after %zu states\n", statesLocal);
-                                                      fflush(stdout);
-                                                      break;
-                                                  }
+//                                                  if(statesLocal >= 100000) {
+//                                                      printf("aborting after %zu states\n", statesLocal);
+//                                                      fflush(stdout);
+//                                                      break;
+//                                                  }
                                               } while(true);
                                           }
             ));
@@ -76,15 +88,17 @@ public:
         return result;
     }
 
-    InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots) {
+    llmc::storage::StorageInterface::InsertedState newState(StateTypeID const& typeID, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
         auto r = _storage.insert(slots, length, typeID == _rootTypeID); // could make it 0?
 
         // Need to up state count, but newState is currently used for chunks as well
 
         return r;
     }
-    StateID newTransition(Context* ctx_, size_t length, StateSlot* slots) {
-        StateID const& stateID = ctx_->sourceState;
+
+    llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots, TransitionInfoUnExpanded const& tinfo) override {
+        auto ctx = static_cast<Context*>(ctx_);
+        StateID const& stateID = ctx->sourceState;
 
         // the type ID could be extracted from stateID...
         auto insertedState = newState(_rootTypeID, length, slots);
@@ -96,14 +110,18 @@ public:
         _transitions++;
         return insertedState.getState();
     }
-    StateID newTransition(Context* ctx_, MultiDelta const& delta) {
-        StateID const& stateID = ctx_->sourceState;
+
+    llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::MultiDelta const& delta, TransitionInfoUnExpanded const& tinfo) override {
+        auto ctx = static_cast<Context*>(ctx_);
+        StateID const& stateID = ctx->sourceState;
         _transitions++;
         abort();
         return 0;
     }
-    StateID newTransition(Context* ctx_, Delta const& delta) {
-        StateID const& stateID = ctx_->sourceState;
+
+    llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::Delta const& delta, TransitionInfoUnExpanded const& tinfo) override {
+        auto ctx = static_cast<Context*>(ctx_);
+        StateID const& stateID = ctx->sourceState;
         auto insertedState = _storage.insert(stateID, delta, true);
         updatable_lock lock(mtx);
         if(insertedState.isInserted()) {
@@ -114,29 +132,33 @@ public:
         return insertedState.getState();
     }
 
-    FullState* getState(Context* ctx, StateID const& s) {
+    llmc::storage::StorageInterface::FullState* getState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
+        auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {
             return _storage.get(s, true);
         } else {
-            FullState* dest = (FullState*)ctx->allocator.allocate(sizeof(FullStateData<StateSlot>) / sizeof(StateSlot) + s.getLength());
-            FullState::create(dest, true, s.getLength());
-            _storage.get(dest->getData(), s, true);
+            size_t stateLength = _storage.determineLength(s);
+            llmc::storage::StorageInterface::FullState* dest = (FullState*)ctx->allocator.allocate(sizeof(llmc::storage::FullStateData<StateSlot>) / sizeof(StateSlot) + stateLength);
+            llmc::storage::StorageInterface::FullState::create(dest, true, stateLength);
+            _storage.get(dest->getDataToModify(), s, true);
             return dest;
         }
     }
 
-    StateID newSubState(StateID const& stateID, Delta const& delta) {
+    llmc::storage::StorageInterface::StateID newSubState(llmc::storage::StorageInterface::StateID const& stateID, Delta const& delta) override {
         auto insertedState = _storage.insert(stateID, delta, false);
         return insertedState.getState();
     }
 
-    const FullState* getSubState(Context* ctx, StateID const& s) {
+    const llmc::storage::StorageInterface::FullState* getSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
+        auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {
             return _storage.get(s, false);
         } else {
-            FullState* dest = (FullState*)ctx->allocator.allocate(sizeof(FullStateData<StateSlot>) / sizeof(StateSlot) + s.getLength());
-            FullState::create(dest, false, s.getLength());
-            _storage.get(dest->getData(), s, false);
+            size_t stateLength = _storage.determineLength(s);
+            FullState* dest = (FullState*)ctx->allocator.allocate(sizeof(llmc::storage::FullStateData<StateSlot>) / sizeof(StateSlot) + stateLength);
+            FullState::create(dest, false, stateLength);
+            _storage.get(dest->getDataToModify(), s, false);
             return dest;
         }
     }
@@ -145,23 +167,23 @@ public:
 //        return _storage.get(dest, s, true);
 //    }
 
-    bool newType(StateTypeID typeID, std::string const& name) {
+    bool newType(llmc::storage::StorageInterface::StateTypeID typeID, std::string const& name) override {
         return false;
     }
 
-    Delta* newDelta(size_t offset, StateSlot* data, size_t len) {
-        return Delta::create(offset, data, len);
+    llmc::storage::StorageInterface::Delta* newDelta(size_t offset, StateSlot* data, size_t len) override {
+        return llmc::storage::StorageInterface::Delta::create(offset, data, len);
     }
 
-    void deleteDelta(Delta* d) {
-        return Delta::destroy(d);
+    void deleteDelta(llmc::storage::StorageInterface::Delta* d) override {
+        return llmc::storage::StorageInterface::Delta::destroy(d);
     }
 
-    StateTypeID newType(std::string const& name) {
+    llmc::storage::StorageInterface::StateTypeID newType(std::string const& name) override {
         static size_t t = 1;
         return t++;
     }
-    bool setRootType(StateTypeID typeID) {
+    bool setRootType(llmc::storage::StorageInterface::StateTypeID typeID) {
         _rootTypeID = typeID;
         return true;
     }
@@ -173,4 +195,5 @@ protected:
     size_t _transitions;
     StateTypeID _rootTypeID;
     Storage _storage;
+    Listener& _listener;
 };

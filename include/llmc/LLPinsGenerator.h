@@ -120,15 +120,17 @@ public:
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
 
             auto memory = cm_memory.generateGet(svMemory);
-            auto v_memory_data      = gctx->gen->generateChunkGetData(memory);
-            auto v_memory_len       = gctx->gen->generateChunkGetLen(memory);
+            memory_data      = gctx->gen->generateChunkGetData(memory);
+            memory_len       = gctx->gen->generateChunkGetLen(memory);
+//            auto v_memory_data      = gctx->gen->generateChunkGetData(memory);
+//            auto v_memory_len       = gctx->gen->generateChunkGetLen(memory);
 
-            auto F = gctx->gen->builder.GetInsertBlock()->getParent();
-            if(!memory_data)      memory_data      = addAlloca(v_memory_data->getType()     , F);
-            if(!memory_len)       memory_len       = addAlloca(v_memory_len->getType()      , F);
-
-            gctx->gen->builder.CreateStore(v_memory_data, memory_data);
-            gctx->gen->builder.CreateStore(v_memory_len , memory_len);
+//            auto F = gctx->gen->builder.GetInsertBlock()->getParent();
+//            if(!memory_data)      memory_data      = addAlloca(v_memory_data->getType()     , F);
+//            if(!memory_len)       memory_len       = addAlloca(v_memory_len->getType()      , F);
+//
+//            gctx->gen->builder.CreateStore(v_memory_data, memory_data);
+//            gctx->gen->builder.CreateStore(v_memory_len , memory_len);
         }
 
         /**
@@ -144,8 +146,11 @@ public:
 
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
 
-            auto memoryData = cm_memory.generateGet(svMemory);
-            return gctx->gen->generateChunkGetLen(memoryData);
+            Value* oldLength;
+            memory_data = cm_memory.generateGetAndCopy(svMemory, oldLength, n);
+            memory_len = gctx->gen->builder.CreateAdd(oldLength, n);
+
+            return gctx->gen->builder.CreateCall(gctx->gen->llmc_func("llmc_os_memory_malloc"), {memory_data, n});
         }
 
         /**
@@ -183,9 +188,9 @@ public:
 
             auto svMemory = gctx->gen->lts["processes"][gctx->thread_id]["memory"].getValue(sv);
 
-            auto v_memory_data = gctx->gen->builder.CreateLoad(memory_data, "memory_data");
-            auto v_memory_len = gctx->gen->builder.CreateLoad(memory_len, "memory_len");
-            auto memory = cm_memory.generatePut(v_memory_len, v_memory_data);
+//            auto v_memory_data = gctx->gen->builder.CreateLoad(memory_data, "memory_data");
+//            auto v_memory_len = gctx->gen->builder.CreateLoad(memory_len, "memory_len");
+            auto memory = cm_memory.generatePut(memory_len, memory_data);
             gctx->gen->builder.CreateStore(memory, svMemory);
         }
 
@@ -221,7 +226,7 @@ public:
     llvm::FunctionType* t_pins_getnext;
     llvm::FunctionType* t_pins_getnextall;
 
-    static int const MAX_THREADS = 4;
+    static int const MAX_THREADS = 2;
     static int const BITWIDTH_STATEVAR = 32;
     static int const BITWIDTH_INT = 32;
     llvm::Constant* t_statevector_size;
@@ -332,7 +337,7 @@ public:
             } else {
                 out.reportNote("Loaded module " + name + ": " + moduleFile.getFilePath());
             }
-            return std::move(module);
+            return module;
         } else {
             out.reportError( "Error loading module "
                            + name
@@ -662,6 +667,9 @@ public:
             BasicBlock* entry = BasicBlock::Create(ctx, "entry" , f_pins_getnext);
             builder.SetInsertPoint(entry);
 
+            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] trying transition group\n"), grp});
+
+
             // FIXME: should not be 'global'
             transition_info = builder.CreateAlloca(pins_type("transition_info_t"));
             auto edgeLabelValue = builder.CreateAlloca(t_edgeLabels);
@@ -723,7 +731,7 @@ public:
 
             // BB for when a transition group finds a transition
             builder.SetInsertPoint(end_report);
-//            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] found a new transition\n"), grp});
+            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] found a new transition\n"), grp});
 
             // FIXME: mogelijk gaat edgeLabelValue fout wanneer 1 label niet geset is maar een andere wel
 
@@ -738,7 +746,7 @@ public:
 
             // BB for when a transition group does not find a transition
             builder.SetInsertPoint(end);
-            //builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] no\n"), grp});
+            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] no\n"), grp});
             builder.CreateRet(ConstantInt::get(t_int, 0));
 
             // From entry, branch to the switch
@@ -1116,8 +1124,22 @@ public:
                     // Update the destination PC
                     builder.CreateStore(ConstantInt::get(t_int, programLocations[ti->instructions.back()->getNextNode()]), dst_pc);
 
+                    // Debug
+                    std::string str;
+                    raw_string_ostream strout(str);
+
+                    //builder.CreateCall(pins("printf"), {generateGlobalString("Instruction: " + strout.str() + "\n")});
+
                     // Generate the next state for the instructions
                     for(auto I: ti->instructions) {
+                        strout << "; ";
+                        if(valueRegisterIndex.count(I)) {
+                            strout << "r[" << valueRegisterIndex[I] << "] ";
+                        }
+                        strout << " {";
+                        strout << I->getFunction()->getName();
+                        strout << "} ";
+                        strout << *I;
                         generateNextStateForInstruction(gctx, I);
                     }
 
@@ -1125,6 +1147,14 @@ public:
                     for(auto& action: ti->actions) {
                         generateNextStateForInstruction(gctx, action);
                     }
+
+                    // Generate the action label
+                    llvmgen::BBComment(builder, "Instruction: " + strout.str());
+                    ChunkMapper cm_action(gctx, type_action);
+                    Value* actionLabelChunkID = cm_action.generatePut( ConstantInt::get(t_int, strout.str().length())
+                            , generateGlobalString(strout.str())
+                    );
+                    gctx->edgeLabels["action"] = actionLabelChunkID;
 
                     // DEBUG: print labels
                     for(auto& nameValue: gctx->edgeLabels) {
@@ -1323,6 +1353,9 @@ public:
             case Instruction::PHI:
                 return true;
             case Instruction::Call:
+                if(dyn_cast<CallInst>(I)->getIntrinsicID() != Intrinsic::not_intrinsic) {
+                    return true;
+                }
                 return false;
             case Instruction::VAArg:
             case Instruction::ExtractElement:
@@ -1585,27 +1618,6 @@ public:
      */
     void generateNextStateForInstruction(GenerationContext* gctx, Instruction* I) {
 
-        // Debug
-        std::string str;
-        raw_string_ostream strout(str);
-        if(valueRegisterIndex.count(I)) {
-            strout << "r[" << valueRegisterIndex[I] << "] ";
-        }
-        strout << "\n";
-        strout << I->getFunction()->getName();
-        strout << " ";
-        strout << *I;
-        llvmgen::BBComment(builder, "Instruction: " + strout.str());
-
-        builder.CreateCall(pins("printf"), {generateGlobalString("Instruction: " + strout.str() + "\n")});
-
-        // Generate the action label
-        ChunkMapper cm_action(gctx, type_action);
-        Value* actionLabelChunkID = cm_action.generatePut( ConstantInt::get(t_int, strout.str().length())
-                                                         , generateGlobalString(strout.str())
-                                                         );
-        gctx->edgeLabels["action"] = actionLabelChunkID;
-
         // Handle the instruction more specifically
         switch(I->getOpcode()) {
             case Instruction::Alloca:
@@ -1682,6 +1694,7 @@ public:
 
         // Perform the malloc
         auto ptr = heap.malloc(I);
+        heap.upload();
 
         // Store the pointer in the model-register
         auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
@@ -1820,6 +1833,27 @@ public:
     void generateNextStateForLoadInstruction(GenerationContext* gctx, LoadInst* I) {
     }
 
+    Value* vMapPointer(Value* registers, Value* sv_memorydata, Value* modelPointerValue, Type* type) {
+        assert(!isa<ConstantExpr>(modelPointerValue) && "this is meant for pointers into memory");
+        assert(!isa<Constant>(modelPointerValue) && "this is meant for pointers into memory");
+
+        // Load the model-register to obtain the pointer to memory
+        modelPointerValue = builder.CreateLoad(vReg(registers, modelPointerValue));
+
+        // Since the pointer is an offset within the heap, add
+        // the start address of the loaded memory chunk to the
+        // offset to obtain the current real address. Current
+        // means within the scope of this next-state call.
+        modelPointerValue = builder.CreatePtrToInt(modelPointerValue, t_intptr);
+        modelPointerValue = builder.CreateAdd(modelPointerValue, builder.CreatePtrToInt(sv_memorydata, t_intptr));
+        modelPointerValue = builder.CreateIntToPtr(modelPointerValue, type);
+
+        // Debug
+        // FIXME: add out-of-bounds check
+//                builder.CreateCall(pins("printf"), {generateGlobalString("access @ %x\n"), OI});
+        return modelPointerValue;
+    }
+
     /**
      * @brief Generates the next-state relation for the Load or Store @c I
      *
@@ -1855,23 +1889,7 @@ public:
             // needs be performed
             if(dyn_cast<Value>(OI.get()) == ptr && !dyn_cast<GlobalVariable>(ptr)) {
 
-                assert(!isa<ConstantExpr>(OI) && "this is meant for pointers into memory");
-                assert(!isa<Constant>(OI) && "this is meant for pointers into memory");
-
-                // Load the model-register to obtain the pointer to memory
-                OI = builder.CreateLoad(vReg(registers, OI.get()));
-
-                // Since the pointer is an offset within the heap, add
-                // the start address of the loaded memory chunk to the
-                // offset to obtain the current real address. Current
-                // means within the scope of this next-state call.
-                OI = builder.CreatePtrToInt(OI, t_intptr);
-                OI = builder.CreateAdd(OI, builder.CreatePtrToInt(sv_memorydata, t_intptr));
-                OI = builder.CreateIntToPtr(OI, I->getPointerOperand()->getType());
-
-                // Debug
-                // FIXME: add out-of-bounds check
-//                builder.CreateCall(pins("printf"), {generateGlobalString("access @ %x\n"), OI});
+                OI = vMapPointer(registers, sv_memorydata, OI.get(), I->getPointerOperand()->getType());
 
             // If this is a 'normal' register or global, simply map it
             } else {
@@ -1900,20 +1918,20 @@ public:
 //                              );
         }
 
-        if(debugChecks) {
-            if(IC->getOpcode() == Instruction::Store) {
-                // Make sure register remain the same
-                auto registers_src = lts["processes"][gctx->thread_id]["r"].getValue(gctx->src);
-                createMemAssert(registers_src, registers, t_registers_max_size);
-            } else if(IC->getOpcode() == Instruction::Load) {
-                // Make sure globals are the same
-                auto globals = lts["globals"].getValue(gctx->svout);
-                auto globals_src = lts["globals"].getValue(gctx->src);
-                createMemAssert(globals_src, globals, generateSizeOf(lts["globals"].getLLVMType()));
-            } else {
-                assert(0);
-            }
-        }
+//        if(debugChecks) {
+//            if(IC->getOpcode() == Instruction::Store) {
+//                // Make sure register remain the same
+//                auto registers_src = lts["processes"][gctx->thread_id]["r"].getValue(gctx->src);
+//                createMemAssert(registers_src, registers, t_registers_max_size);
+//            } else if(IC->getOpcode() == Instruction::Load) {
+//                // Make sure globals are the same
+//                auto globals = lts["globals"].getValue(gctx->svout);
+//                auto globals_src = lts["globals"].getValue(gctx->src);
+//                createMemAssert(globals_src, globals, generateSizeOf(lts["globals"].getLLVMType()));
+//            } else {
+//                assert(0);
+//            }
+//        }
 
         // Upload the new memory chunk
         auto newMem = cm_memory.generatePut(sv_memorylen, sv_memorydata);
@@ -2041,12 +2059,31 @@ public:
                         builder.CreateStore(threadsStarted, tid_p);
                         builder.CreateStore(threadsStarted, threadsStarted_p);
 
+                        // Load the memory by making a copy
+                        ChunkMapper cm_memory(gctx, type_memory);
+                        auto chunkMemory = lts["processes"][gctx->thread_id]["memory"].getValue(gctx->svout);
+                        Value* sv_memorylen;
+                        auto sv_memorydata = cm_memory.generateGetAndCopy(chunkMemory, sv_memorylen);
+
                         auto registers = lts["processes"][tIdx]["r"].getValue(gctx->svout);
-                        auto tid_in_program = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-                        tid_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_in_program, t_int64p);
+                        auto tid_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
+//                        auto tid_in_program = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
+//                        tid_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_in_program, t_int64p);
                         builder.CreateStore( builder.CreateIntCast(threadsStarted, t_int64, false)
                                            , tid_in_program
                                            );
+                        builder.CreateCall( pins("printf")
+                                          , { generateGlobalString("Storing %zu to pthread_t %p %p\n")
+                                            , builder.CreateIntCast(threadsStarted, t_int64, false)
+                                            , tid_in_program
+                                            , registers
+                                            }
+                                          );
+
+                        // Upload the new memory chunk
+                        auto newMem = cm_memory.generatePut(sv_memorylen, sv_memorydata);
+                        builder.CreateStore(newMem, chunkMemory);
+
                         genIf.endTrue();
 
                         // If it is false, do nothing, the next iteration will
@@ -2089,7 +2126,9 @@ public:
 
     //                auto result = builder.CreateAlloca(t_int64);
                     auto tid = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-                    tid = builder.CreatePtrToInt(tid, t_int64);
+                    tid = builder.CreatePointerBitCastOrAddrSpaceCast(tid, t_int64p);
+                    tid = builder.CreateLoad(tid, t_intp);
+                    //tid = builder.CreatePtrToInt(tid, t_int);
 
                     auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
                     storeResult = builder.CreatePointerCast(storeResult, t_voidpp);
@@ -2110,7 +2149,6 @@ public:
 
                     builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
                     builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
-
 
                     builder.SetInsertPoint(genIf.getFinal());
 

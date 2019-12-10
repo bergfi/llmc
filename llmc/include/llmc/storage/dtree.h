@@ -3,6 +3,8 @@
 #include "interface.h"
 #include "../../../../dtree/dtree/include/dtree/dtree.h"
 
+namespace llmc::storage {
+
 template<typename OUT, typename CONTAINER>
 void printGraph(OUT& out, CONTAINER& elements, std::string const& colorCode) {
 
@@ -15,16 +17,16 @@ void printGraph(OUT& out, CONTAINER& elements, std::string const& colorCode) {
 
     out << colorCode;
     for(size_t i = 0; i < elements.size(); ++i) {
-        if(elements[i]==0) {
+        if(elements[i] == 0) {
             out << char(level[0]);
-        } else if(elements[i]==maxElements) {
+        } else if(elements[i] == maxElements) {
             out << char(level[6]);
         } else {
-            size_t percent = 100*elements[i]/maxElements;
-            if(95<percent) {
+            size_t percent = 100 * elements[i] / maxElements;
+            if(95 < percent) {
                 out << char(level[5]);
             } else {
-                out << char(level[1+3*elements[i]/maxElements]);
+                out << char(level[1 + 3 * elements[i] / maxElements]);
             }
         }
     }
@@ -33,10 +35,10 @@ void printGraph(OUT& out, CONTAINER& elements, std::string const& colorCode) {
 }
 
 template<typename HASHSET>
-class DTreeStorage: public StorageInterface {
+class DTreeStorage : public StorageInterface {
 public:
 
-    DTreeStorage(): _store(24) {
+    DTreeStorage() : _store(24) {
 
     }
 
@@ -45,7 +47,10 @@ public:
 
     void init() {
         _store.init();
-        std::cout << "Storage initialized with scale " << _store.getScale() << ", root scale " << _store.getRootScale() << std::endl;
+//        std::cout << "Storage initialized with scale " << _store.getScale() << ", root scale " << _store.getRootScale() << std::endl;
+    }
+
+    void thread_init() {
     }
 
     void setScale(size_t scale) {
@@ -61,7 +66,10 @@ public:
     using StateTypeID = StorageInterface::StateTypeID;
     using Delta = StorageInterface::Delta;
     using MultiDelta = StorageInterface::MultiDelta;
-    using StateID = typename DTree::Index;
+    using StateID = StorageInterface::StateID;
+    using InsertedState = StorageInterface::InsertedState;
+//    using StateID = typename dtree<HASHSET>::Index;
+//    using InsertedState = typename dtree<HASHSET>::IndexInserted;
 
 //    class InsertedState {
 //    public:
@@ -81,37 +89,42 @@ public:
 //        StateID _stateID;
 //        uint64_t _inserted;
 //    };
-    using InsertedState = typename DTree::IndexInserted;
 
     StateID find(FullState* state) {
         auto idx = _store.find(state->getData(), state->getLength(), state->isRoot());
-        return idx;
+        return idx.getData();
     }
+
     StateID find(StateSlot* state, size_t length, bool isRoot) {
         auto idx = _store.find(state, length, isRoot);
-        return idx;
+        return idx.getData();
     }
+
     InsertedState insert(FullState* state) {
         auto idx = _store.insert(state->getData(), state->getLength(), state->isRoot());
-        return idx;
+        return InsertedState(idx.getState().getData(), idx.isInserted());
     }
+
     InsertedState insert(StateSlot* state, size_t length, bool isRoot) {
         auto idx = _store.insert(state, length, isRoot);
-        return idx;
+        return InsertedState(idx.getState().getData(), idx.isInserted());
     }
+
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
-        auto idx = _store.delta(DTreeIndex(stateID.getData()), delta.getOffset(), delta.getData(), delta.getLength(), isRoot);
-        return idx;
+        auto idx = _store.delta(DTreeIndex(stateID.getData()), delta.getOffset(), delta.getData(), delta.getLength(),
+                                isRoot);
+        return InsertedState(idx.getState().getData(), idx.isInserted());
     }
 
     FullState* get(StateID id, bool isRoot) {
-        FullState* dest = FullState::create(true, id.getLength());
-        get(dest->getData(), id, isRoot);
+        DTreeIndex treeID(id.getData());
+        FullState* dest = FullState::create(true, treeID.getLength());
+        get(dest->getDataToModify(), id, isRoot);
         return dest;
     }
 
     bool get(StateSlot* dest, StateID id, bool isRoot) {
-        return _store.get(id, (uint32_t*)dest, isRoot);
+        return _store.get(id.getData(), (uint32_t*) dest, isRoot);
     }
 
     void printStats() {
@@ -144,6 +157,28 @@ public:
         return false;
     }
 
+    static bool constexpr stateHasFixedLength() {
+        return false;
+    }
+
+    static bool constexpr stateHasLengthInfo() {
+        return true;
+    }
+
+    static bool constexpr needsThreadInit() {
+        return false;
+    }
+
+    size_t determineLength(StateID const& s) const {
+        return ((typename dtree<HASHSET>::Index*) &s)->getLength();;
+    }
+
+    size_t getMaxStateLength() const {
+        return 1ULL << 24;
+    }
+
 private:
     dtree<HASHSET> _store;
 };
+
+} // namespace llmc::storage

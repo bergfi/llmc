@@ -1,19 +1,25 @@
-#include <llmc/storage/interface.h>
+#include <llmc/storage/stdmap.h>
 #include <llmc/storage/dtree.h>
+#include <llmc/storage/treedbs.h>
 #include <gtest/gtest.h>
 #include <gtest/gtest-typed-test.h>
+#include <llmc/storage/cchm.h>
 
 template <typename T>
-class FooTest : public ::testing::Test {
+class StorageTest: public ::testing::Test {
 public:
     T value_;
 };
 
-using MyTypes = ::testing::Types<CrappyStorage, DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit>>>>;
+using MyTypes = ::testing::Types< llmc::storage::TreeDBSStorage
+                                , llmc::storage::StdMap
+//                                , llmc::storage::cchm
+                                , llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit>>>
+                                >;
 //using MyTypes = ::testing::Types<DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit>>>>;
-TYPED_TEST_CASE(FooTest, MyTypes);
+TYPED_TEST_CASE(StorageTest, MyTypes);
 
-TYPED_TEST(FooTest, BasicInsertLength2) {
+TYPED_TEST(StorageTest, BasicInsertLength2) {
     TypeParam storage;
     storage.init();
 
@@ -45,7 +51,7 @@ TYPED_TEST(FooTest, BasicInsertLength2) {
     EXPECT_EQ(stateIDs[3].getState(), stateIDsFound[3]);
 }
 
-TYPED_TEST(FooTest, BasicInsertLength4) {
+TYPED_TEST(StorageTest, BasicInsertLength4) {
     TypeParam storage;
     storage.init();
 
@@ -79,7 +85,7 @@ TYPED_TEST(FooTest, BasicInsertLength4) {
     EXPECT_EQ(stateIDs[3].getState(), stateIDsFound[3]);
 }
 
-TYPED_TEST(FooTest, BasicDuplicateInsert) {
+TYPED_TEST(StorageTest, BasicDuplicateInsert) {
     TypeParam storage;
     storage.init();
 
@@ -112,7 +118,7 @@ TYPED_TEST(FooTest, BasicDuplicateInsert) {
     EXPECT_EQ(stateIDs[1].getState(), stateIDsFound);
 }
 
-TYPED_TEST(FooTest, BasicDeltaTransition) {
+TYPED_TEST(StorageTest, BasicDeltaTransition) {
     TypeParam storage;
     storage.init();
 
@@ -133,10 +139,18 @@ TYPED_TEST(FooTest, BasicDeltaTransition) {
     EXPECT_TRUE(stateIDs[1].isInserted());
     EXPECT_TRUE(stateIDsFound.exists());
     EXPECT_EQ(stateIDs[1].getState(), stateIDsFound);
+    if(stateIDs[1].getState() != stateIDsFound) {
+        auto fsd1 = storage.get(stateIDs[1].getState(), true);
+        auto fsd2 = storage.get(stateIDsFound, true);
+        auto stateBuffer = fsd1->getData();
+        fprintf(stderr, "stateIDs[1]: %x %x %x %x\n", stateBuffer[0], stateBuffer[1], stateBuffer[2], stateBuffer[3]);
+        stateBuffer = fsd2->getData();
+        fprintf(stderr, "stateIDsFound: %x %x %x %x\n", stateBuffer[0], stateBuffer[1], stateBuffer[2], stateBuffer[3]);
+    }
     TypeParam::Delta::destroy(delta);
 }
 
-TYPED_TEST(FooTest, BasicLoopTransition) {
+TYPED_TEST(StorageTest, BasicLoopTransition) {
     TypeParam storage;
     storage.init();
 
@@ -144,14 +158,14 @@ TYPED_TEST(FooTest, BasicLoopTransition) {
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[4];
 
-    stateIDs[1] = storage.insert(&states[1], 2, true);
+    stateIDs[1] = storage.insert(&states[1], 2, true); // insert {1,2}
     stateIDsFound[1] = storage.find(&states[1], 2, true);
     EXPECT_TRUE(stateIDs[1].isInserted());
     EXPECT_TRUE(stateIDsFound[1].exists());
     EXPECT_EQ(stateIDs[1].getState(), stateIDsFound[1]);
 
     typename TypeParam::Delta* delta1 = TypeParam::Delta::create(0, &states[2], 2);
-    stateIDs[2] = storage.insert(stateIDs[1].getState(), *delta1, true);
+    stateIDs[2] = storage.insert(stateIDs[1].getState(), *delta1, true); // insert {1,2} -> {2,3}
     stateIDsFound[2] = storage.find(&states[2], 2, true);
     EXPECT_TRUE(stateIDs[2].isInserted());
     EXPECT_TRUE(stateIDsFound[2].exists());
@@ -159,16 +173,25 @@ TYPED_TEST(FooTest, BasicLoopTransition) {
     TypeParam::Delta::destroy(delta1);
 
     typename TypeParam::Delta* delta2 = TypeParam::Delta::create(0, &states[1], 2);
-    stateIDs[3] = storage.insert(stateIDs[2].getState(), *delta2, true);
+    stateIDs[3] = storage.insert(stateIDs[2].getState(), *delta2, true); // insert {2,3} -> {1,2}
     stateIDsFound[3] = storage.find(&states[1], 2, true);
     EXPECT_FALSE(stateIDs[3].isInserted());
     EXPECT_TRUE(stateIDsFound[3].exists());
     EXPECT_EQ(stateIDs[3].getState(), stateIDsFound[3]);
     EXPECT_EQ(stateIDs[3].getState(), stateIDs[1].getState());
     TypeParam::Delta::destroy(delta2);
+
+    if(stateIDs[3].getState() != stateIDs[1].getState()) {
+        auto fsd1 = storage.get(stateIDs[3].getState(), true);
+        auto fsd2 = storage.get(stateIDs[1].getState(), true);
+        auto stateBuffer = fsd1->getData();
+        fprintf(stderr, "stateIDs[3]: %x %x %x %x\n", stateBuffer[0], stateBuffer[1], stateBuffer[2], stateBuffer[3]);
+        stateBuffer = fsd2->getData();
+        fprintf(stderr, "stateIDs[1]: %x %x %x %x\n", stateBuffer[0], stateBuffer[1], stateBuffer[2], stateBuffer[3]);
+    }
 }
 
-TYPED_TEST(FooTest, MultiSlotGet) {
+TYPED_TEST(StorageTest, MultiSlotGet) {
     TypeParam storage;
     storage.init();
 
@@ -189,7 +212,7 @@ TYPED_TEST(FooTest, MultiSlotGet) {
     EXPECT_FALSE(memcmp(state1, fsd->getData(), sizeof(state1)));
 }
 
-TYPED_TEST(FooTest, MultiSlotLoopTransition) {
+TYPED_TEST(StorageTest, MultiSlotLoopTransition) {
     TypeParam storage;
     storage.init();
 
@@ -222,7 +245,7 @@ TYPED_TEST(FooTest, MultiSlotLoopTransition) {
     EXPECT_EQ(stateIDs[3].getState(), stateIDs[1].getState());
 }
 
-TYPED_TEST(FooTest, MultiSlotLoopTransitionWithOffset) {
+TYPED_TEST(StorageTest, MultiSlotLoopTransitionWithOffset) {
     TypeParam storage;
     storage.init();
 
@@ -255,7 +278,7 @@ TYPED_TEST(FooTest, MultiSlotLoopTransitionWithOffset) {
     EXPECT_EQ(stateIDs[3].getState(), stateIDs[1].getState());
 }
 
-TYPED_TEST(FooTest, MultiSlotDiamondTransition) {
+TYPED_TEST(StorageTest, MultiSlotDiamondTransition) {
     TypeParam storage;
 //    storage.setRootScale(8);
 //    storage.setScale(8);

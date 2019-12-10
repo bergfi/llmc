@@ -1,21 +1,8 @@
+#include <string>
+#include <vector>
+
 #include <llmc/models/PINSModel.h>
 #include <llmc/ssgen.h>
-
-struct lts_type_s {
-int state_length;
-char** state_name;
-int* state_type;
-int state_label_count;
-char** state_label_name;
-int* state_label_type;
-int edge_label_count;
-char** edge_label_name;
-int* edge_label_type;
-void* type_db;
-void *type_format;
-int *type_min;
-int *type_max;
-};
 
 #include "stdint.h" /* Replace with <stdint.h> if appropriate */
 #undef get16bits
@@ -75,19 +62,19 @@ int rem;
 }
 
 extern "C" void GBsetInitialState(model_t ctx_, int* state) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setInitialState(state);
 }
 
 extern "C" void GBsetLTStype(model_t ctx_, lts_type_t ltstype) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
-    model->setLength(ltstype->state_length*4);
+    model->setType(ltstype);
 }
 
 extern "C" void GBsetDMInfo(model_t ctx_, matrix_t* dm) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setTransitionGroups(dm->rows);
 }
@@ -104,17 +91,17 @@ extern "C" {
 
 // new
 int pins_chunk_put(void* ctx_, int type, chunk c) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_put(ctx, type, c);
 }
 chunk pins_chunk_get(void* ctx_, int type, int idx) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_get(ctx, type, idx);
 }
 int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     return model->pins_chunk_cam(ctx, type, idx, offset, data, len);
 }
@@ -138,13 +125,13 @@ int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int le
 }
 
 extern "C" void GBsetNextStateLong(model_t ctx_, next_method_grey_t f) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setGetNext(f);
 }
 
 extern "C" void GBsetNextStateAll(model_t ctx_, next_method_black_t f) {
-    MCI::ContextImpl<void, PINSModelBase>* ctx = reinterpret_cast<MCI::ContextImpl<void, PINSModelBase>*>(ctx_);
+    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
     model->setGetNextAll(f);
 }
@@ -155,17 +142,47 @@ extern "C" void dm_create(matrix_t* m, const int rows, const int cols) {
     m->cols = cols;
 }
 extern "C" void dm_fill(matrix_t*) {}
-extern "C" lts_type_t lts_type_create() { return (lts_type_t)calloc(1, sizeof(lts_type_s)); }
-extern "C" int lts_type_add_type(lts_type_t, const char*, int*) {
-    static int t = 1; // used to start at 0, but 0 is now reserved for root
-    return t++;
+extern "C" lts_type_t lts_type_create() {
+    return new lts_type_s;
 }
-extern "C" void lts_type_set_state_length(lts_type_t ctx, int length) {
-    ctx->state_length = length;
+extern "C" int lts_type_add_type(lts_type_t ltsType, const char* name, int* is_new) {
+    size_t size = ltsType->type_db.size();
+    for(size_t i = 0; i < size; ++i) {
+        auto& s = ltsType->type_db[i];
+        if (s == name) {
+            if (is_new) *is_new = false;
+            return i;
+        }
+    }
+    if (is_new) *is_new = true;
+    ltsType->type_db.push_back(name);
+    return size;
 }
-extern "C" void lts_type_set_state_typeno(lts_type_t, int, int) {}
-extern "C" void lts_type_set_state_name(lts_type_t, int, const char*) {}
-extern "C" void lts_type_set_edge_label_count(lts_type_t, int) {}
-extern "C" void lts_type_set_edge_label_typeno(lts_type_t, int, int) {}
-extern "C" void lts_type_set_edge_label_name(lts_type_t, int, const char*) {}
+extern "C" void lts_type_set_state_length(lts_type_t ltsType, int length) {
+    ltsType->state_description.resize(length);
+}
+extern "C" void lts_type_set_state_typeno(lts_type_t ltsType, int stateIndex, int typeIndex) {
+    ltsType->state_description.reserve(stateIndex);
+    ltsType->state_description[stateIndex].type = typeIndex;
+}
+extern "C" void lts_type_set_state_name(lts_type_t ltsType, int stateIndex, const char* name) {
+    ltsType->state_description.reserve(stateIndex);
+    ltsType->state_description[stateIndex].name = name;
+}
+extern "C" void lts_type_set_edge_label_count(lts_type_t ltsType, int count) {
+    ltsType->edge_label.resize(count);
+    printf("lts_type_set_edge_label_count(%x, %u)\n", ltsType, count);
+}
+extern "C" void lts_type_set_edge_label_typeno(lts_type_t ltsType, int index, int type) {
+    ltsType->edge_label.reserve(index);
+    ltsType->edge_label[index].type = type;
+}
+extern "C" void lts_type_set_edge_label_name(lts_type_t ltsType, int index, const char* name) {
+    ltsType->edge_label.reserve(index);
+    ltsType->edge_label[index].name = name;
+}
 extern "C" void lts_type_set_format(lts_type_t, int, data_format_t) {}
+
+void lts_type_destroy(lts_type_t *t) {
+    delete t;
+}

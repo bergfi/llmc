@@ -39,6 +39,11 @@ if(NOT HAVE_FFI)
     endif()
 endif()
 
+include_directories(
+        include
+        ../llmc/include
+)
+
 target_link_libraries(libllmc -Wl,-E
     ${FFI_LIBRARY}
     ${LLVM_LIBS}
@@ -63,4 +68,3 @@ add_custom_target(pinsllvmheader ALL SOURCES ${CMAKE_CURRENT_BINARY_DIR}/pins.h.
 #configure_file(${CMAKE_CURRENT_SOURCE_DIR}/pins.h.ll ${CMAKE_CURRENT_BINARY_DIR}/pins.h.ll COPYONLY)
 
 install (FILES ${CMAKE_CURRENT_BINARY_DIR}/pins.h.ll DESTINATION share/llmc)
-
