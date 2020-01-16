@@ -161,6 +161,7 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
         // Put the new frame on the stack
         ChunkMapper cm_stack(gctx, gen->type_stack);
         auto newStackChunkID = cm_stack.generatePut(gen->generateSizeOf(t_frame), frame);
+        gctx->gen->setDebugLocation(newStackChunkID, __FILE__, __LINE__);
         gen->builder.CreateStore(newStackChunkID, pStackChunkID);
 
     }
@@ -315,7 +316,8 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             // Append the new tuple to the list of tuples
             ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);
             auto tres_p = gen->lts["tres"].getValue(gctx->svout);
-            cm_tres.generateCloneAndAppend(tres_p, newTres, gen->generateSizeOf(t_tres));
+            auto newListOfTRes = cm_tres.generateCloneAndAppend(tres_p, newTres, gen->generateSizeOf(t_tres));
+            gen->builder.CreateStore(newListOfTRes, tres_p);
         }
     }
 

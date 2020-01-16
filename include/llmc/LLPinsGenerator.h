@@ -2072,18 +2072,20 @@ public:
                         Value* sv_memorylen;
                         auto sv_memorydata = cm_memory.generateGetAndCopy(chunkMemory, sv_memorylen);
 
+                        // Store the thread ID in the program (pthread_t)
                         auto registers = lts["processes"][tIdx]["r"].getValue(gctx->svout);
-                        auto tid_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
-//                        auto tid_in_program = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-//                        tid_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_in_program, t_int64p);
+                        auto tid_p_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
                         builder.CreateStore( builder.CreateIntCast(threadsStarted, t_int64, false)
-                                           , tid_in_program
+                                           , tid_p_in_program
                                            );
+
+                        // Debug print
                         builder.CreateCall( pins("printf")
-                                          , { generateGlobalString("Storing %zu to pthread_t %p %p\n")
+                                          , { generateGlobalString("Storing %zu to pthread_t %p %p %p\n")
                                             , builder.CreateIntCast(threadsStarted, t_int64, false)
-                                            , tid_in_program
+                                            , tid_p_in_program
                                             , registers
+                                            , sv_memorydata
                                             }
                                           );
 
@@ -2111,10 +2113,6 @@ public:
                     builder.SetInsertPoint(BBEnd);
                 } else if(F->getName().equals("pthread_join")) {
                     // int pthread_join(pthread_t thread, void **value_ptr);
-                    //auto F = pins("pthread_join");
-                    //assert(F);
-
-                    //auto BBEnd = BasicBlock::Create(ctx, "pthread_join_if_pos_end", builder.GetInsertBlock()->getParent());
 
                     ChunkMapper cm_tres = ChunkMapper(gctx, type_threadresults);
 
@@ -2125,21 +2123,29 @@ public:
                     auto results_data = generateChunkGetData(results);
                     auto results_len = generateChunkGetLen(results);
 
-                    // Setup if
-                    //llvmgen::For genFor(builder, "pthread_join_result_loop");
+                    // Load the memory by making a copy
+                    ChunkMapper cm_memory(gctx, type_memory);
+                    auto chunkMemory = lts["processes"][gctx->thread_id]["memory"].getValue(gctx->svout);
+                    auto sv_memorydata = generateChunkGetData(cm_memory.generateGet(chunkMemory));
 
-                    // Set condition
-                    //genFor.setRange(results_data, generatePointerAdd(results_data, results_len), ConstantInt::get(t_int, 8));
+                    // Load the TID of the thread to join
+                    auto tid_p_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
+                    tid_p_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tidPointer, t_int64p);
+                    auto tid = builder.CreateLoad(tid_p_in_program, t_intp);
 
-    //                auto result = builder.CreateAlloca(t_int64);
-                    auto tid = vReg(registers, *I->getParent()->getParent(), "tid", I->getArgOperand(0));
-                    tid = builder.CreatePointerBitCastOrAddrSpaceCast(tid, t_int64p);
-                    tid = builder.CreateLoad(tid, t_intp);
-                    //tid = builder.CreatePtrToInt(tid, t_int);
+                    // Debug print
+                    builder.CreateCall( pins("printf")
+                                      , { generateGlobalString("tid loaded %u from %p\n")
+                                        , tid
+                                        , tid_p_in_program
+                                        }
+                                      );
 
+                    // Pointer to where the result of the thread will be stored
                     auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
                     storeResult = builder.CreatePointerCast(storeResult, t_voidpp);
 
+                    // Find the result in the list of thread results
                     auto llmc_list_find = pins("llmc_list_find");
                     auto found = builder.CreateCall( llmc_list_find
                                                    , { results_data
@@ -2149,11 +2155,13 @@ public:
                                                      }
                                                    );
 
+                    // Generate an if for whether or not the specific thread is finished or not
                     llvmgen::If genIf(builder, "pthread_join_result_not_found");
                     genIf.setCond(builder.CreateICmpEQ(found, ConstantInt::get(found->getType(), 0)));
                     auto BBTrue = genIf.getTrue();
                     genIf.generate();
 
+                    // If it is not found, inhibit the transition report
                     builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
                     builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
 
