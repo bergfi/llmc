@@ -79,15 +79,16 @@ public:
         out << std::endl;
     }
 
-    void writeTransition(StateID const& from, StateID const& to) {
-//        TransitionInfo t = tInfo();
+    void writeTransition(StateID const& from, StateID const& to, TransitionInfo const& tInfo) {
+        TransitionInfo const& t = tInfo;
         out << "\ts" << from.getData() << " -> s" << to.getData();
-//        if(t.label.length() > 0) {
-//            out << " [label=\"" << t.label << "\"]";
-//        } else {
+        if(t.label.length() > 0) {
+            out << " [label=\"" << t.label << "\"]";
+        } else {
             out << " []";
-//        }
+        }
         out << ";" << std::endl;
+        std::cerr << from.getData() << " -> " << to.getData() << std::endl;
     }
 
     void writeVector(ostream& out, Model* model, size_t length, const StateSlot* slots) {

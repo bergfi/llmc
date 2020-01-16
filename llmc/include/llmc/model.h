@@ -16,6 +16,7 @@ extern "C" {
 #include <llmc/statespace/statetype.h>
 #include <llmc/storage/interface.h>
 #include <llmc/modelcheckers/interface.h>
+#include <llmc/transitioninfo.h>
 
 class Model {
 public:
@@ -48,6 +49,15 @@ public:
 
     VContext(VModelChecker<STORAGE>* mc_, VModel<STORAGE>* model): model(model), mc(mc_), sourceState(0) {}
 
+    template<typename T>
+    T* getModel() {
+        return (T*)model;
+    }
+
+    VModel<STORAGE>* getModel() {
+        return model;
+    }
+
 public:
     VModel<STORAGE>* model;
     VModelChecker<STORAGE>* mc;
@@ -73,5 +83,6 @@ public:
     virtual size_t getNextAll(StateID const& s, Context* ctx) = 0;
     virtual StateID getInitial(Context* ctx) = 0;
     virtual llmc::statespace::Type* getStateVectorType() = 0;
+    virtual TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx, TransitionInfoUnExpanded const& tinfo_) const = 0;
 
 };

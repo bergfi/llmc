@@ -106,8 +106,7 @@ protected:
     size_t _labelIndex = -1;
 };
 
-template<typename MODELCHECKER>
-class PINSModel: public PINSModelBase, VModel<llmc::storage::StorageInterface> {
+class PINSModel: public PINSModelBase, public VModel<llmc::storage::StorageInterface> {
 public:
     static PINSModel* get(std::string const& filename) {
         auto handle = dlopen(filename.c_str(), RTLD_LAZY);
@@ -122,7 +121,6 @@ public:
         return new PINSModel(handle);
     }
 
-    using TransitionInfo = typename Model::TransitionInfo;
 
 public:
 
@@ -154,34 +152,34 @@ public:
     ~PINSModel() {
     }
 
-    size_t getNextAll(typename MODELCHECKER::StateID const& s, typename MODELCHECKER::Context& ctx) override {
+    size_t getNextAll(StateID const& s, Context* ctx) override {
 
-        printf("getNextAll()\n");
+        printf("getNextAll(%x,%p)\n", s.getData(), ctx);
 
-        const typename MODELCHECKER::FullState* state = ctx.mc->getState(&ctx, s);
+        //const typename MODELCHECKER::FullState* state = ctx->getModelChecker()->getState(ctx, s);
         //_pins_getnextall();
         auto cb = (TransitionCB)reportTransitionCB;//getCB_ReportTransition();
         for(int tg = 0; tg < this->_tgroups; ++tg) {
 //            _pins_getnext((model_t)nullptr, tg, ((int*)nullptr), nullptr, (void *)nullptr);
-            auto fsd = ctx.mc->getState(&ctx, s);
-            _pins_getnext((model_t)&ctx, tg, ((int*)fsd->getData()), cb, (void *)&ctx);
+            auto fsd = ctx->getModelChecker()->getState(ctx, s);
+            _pins_getnext((model_t)ctx, tg, ((int*)fsd->getData()), cb, (void *)ctx);
         }
         return 0;
     }
-    typename MODELCHECKER::StateID getInitial(typename MODELCHECKER::Context& ctx) override {
+    StateID getInitial(Context* ctx) override {
         assert(_pins_model_init);
-        _pins_model_init((void*)&ctx);
+        _pins_model_init((void*)ctx);
         assert(this->_init);
-        return ctx.mc->newState(0, _length, _init).getState();
+        return ctx->getModelChecker()->newState(0, _length, _init).getState();
     }
 
-    static typename MODELCHECKER::StateTypeID getTypeID(int type) {
+    static llmc::storage::StorageInterface::StateTypeID getTypeID(int type) {
         return type;
     }
 
     virtual int pins_chunk_put(void* ctx_, int type, chunk c) {
-        typename MODELCHECKER::Context* ctx = reinterpret_cast<typename MODELCHECKER::Context*>(ctx_);
-        auto r = ctx->mc->newState(getTypeID(type), (size_t)(c.len / sizeof(typename MODELCHECKER::StateSlot)), (typename MODELCHECKER::StateSlot*)c.data).getState().getData();
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        auto r = ctx->mc->newState(getTypeID(type), (size_t)(c.len / sizeof(llmc::storage::StorageInterface::StateSlot)), (llmc::storage::StorageInterface::StateSlot*)c.data).getState().getData();
 //        printf("pins_chunk_put %u:", c.len);
 //        char* ch = c.data;
 //        char* end = c.data + c.len;
@@ -193,10 +191,10 @@ public:
         return r;
     }
     virtual chunk pins_chunk_get(void* ctx_, int type, int idx) {
-        typename MODELCHECKER::Context* ctx = reinterpret_cast<typename MODELCHECKER::Context*>(ctx_);
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         chunk c;
         auto fsd = ctx->mc->getSubState(ctx, idx);
-        c.len = fsd->getLength() * sizeof(typename MODELCHECKER::StateSlot);
+        c.len = fsd->getLength() * sizeof(llmc::storage::StorageInterface::StateSlot);
         c.data = (decltype(c.data))fsd->getData();
 //        printf("pins_chunk_get %u:", c.len);
 //        char* ch = c.data;
@@ -209,29 +207,28 @@ public:
         return c;
     }
     virtual int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
-        typename MODELCHECKER::Context* ctx = reinterpret_cast<typename MODELCHECKER::Context*>(ctx_);
-        auto d = ctx->mc->newDelta(offset, (typename MODELCHECKER::StateSlot*)data, len / sizeof(typename MODELCHECKER::StateSlot*));
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        auto d = ctx->mc->newDelta(offset, (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot*));
         auto s = ctx->mc->newSubState(idx, *d);
         ctx->mc->deleteDelta(d);
         return s.getData();
     }
 
     static void reportTransitionCB(void* ctx_, transition_info* tinfo, int* state, int* changes) {
-        typename MODELCHECKER::Context* ctx = reinterpret_cast<typename MODELCHECKER::Context*>(ctx_);
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         TransitionInfoUnExpanded t = TransitionInfoUnExpanded::construct(tinfo);
         ctx->mc->newTransition( ctx
                               , ((PINSModel*)ctx->model)->getLength()
-                              , (typename MODELCHECKER::StateSlot*)state
+                              , (llmc::storage::StorageInterface::StateSlot*)state
                               , t
                               );
     }
 
-    TransitionInfo getTransitionInfo(typename MODELCHECKER::Context* ctx, TransitionInfoUnExpanded& tinfo_) {
+    TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx, TransitionInfoUnExpanded const& tinfo_) const override {
         auto tinfo = tinfo_.get<transition_info*>();
-        printf("Hello %p %p %x\n", tinfo, tinfo->labels, ctx->model->_labelIndex); fflush(stdout);
         if(tinfo && tinfo->labels) {
-            auto labelIndex = ctx->model->_labelIndex;
-            if(labelIndex < ctx->model->_ltsType->edge_label.size()) {
+            auto labelIndex = ctx->getModel<PINSModel>()->_labelIndex;
+            if(labelIndex < ctx->getModel<PINSModel>()->_ltsType->edge_label.size()) {
                 auto fsd = ctx->mc->getSubState(ctx, tinfo->labels[labelIndex]);
                 return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
             }
@@ -244,7 +241,7 @@ public:
     }
 
 protected:
-    typename MODELCHECKER::StateID _initID;
+    typename llmc::storage::StorageInterface::StateID _initID;
 };
 
 //template<typename MODELCHECKER>

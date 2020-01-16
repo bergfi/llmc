@@ -12,7 +12,7 @@ struct TransitionInfoUnExpanded {
 
     template<typename T>
     T const& get() const {
-        return *reinterpret_cast<T*>(&_data);
+        return *reinterpret_cast<const T*>(&_data);
     }
 private:
     explicit TransitionInfoUnExpanded(size_t data): _data(data) {}

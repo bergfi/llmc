@@ -156,17 +156,19 @@ void goPINS(std::string soFile) {
     ofstream f;
     f.open("out.dot", std::fstream::trunc);
 
+    using MC = ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>;
+
 //    PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>* model = PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>::get(soFile);
 //    llmc::statespace::DotPrinter< ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>
 //                                , PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>
 //                                > printer(f);
 //    ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter> mc(model, printer);
 
-    VModel<llmc::storage::StorageInterface>* model = new LLVMModel();
-    llmc::statespace::DotPrinter< ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>
+    VModel<llmc::storage::StorageInterface>* model = PINSModel::get(soFile);
+    llmc::statespace::DotPrinter< MC
                                 , VModel<llmc::storage::StorageInterface>
                                 > printer(f);
-    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
+    MC mc(model, printer);
 
     mc.go();
     f.close();

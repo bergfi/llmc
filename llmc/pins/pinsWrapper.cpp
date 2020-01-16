@@ -63,19 +63,19 @@ int rem;
 
 extern "C" void GBsetInitialState(model_t ctx_, int* state) {
     auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto model = static_cast<PINSModel*>(ctx->model);
     model->setInitialState(state);
 }
 
 extern "C" void GBsetLTStype(model_t ctx_, lts_type_t ltstype) {
     auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto model = static_cast<PINSModel*>(ctx->model);
     model->setType(ltstype);
 }
 
 extern "C" void GBsetDMInfo(model_t ctx_, matrix_t* dm) {
     auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto model = static_cast<PINSModel*>(ctx->model);
     model->setTransitionGroups(dm->rows);
 }
 
@@ -91,18 +91,18 @@ extern "C" {
 
 // new
 int pins_chunk_put(void* ctx_, int type, chunk c) {
-    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
     return model->pins_chunk_put(ctx, type, c);
 }
 chunk pins_chunk_get(void* ctx_, int type, int idx) {
-    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
     return model->pins_chunk_get(ctx, type, idx);
 }
 int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
-    auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
     return model->pins_chunk_cam(ctx, type, idx, offset, data, len);
 }
 
@@ -126,13 +126,13 @@ int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int le
 
 extern "C" void GBsetNextStateLong(model_t ctx_, next_method_grey_t f) {
     auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto model = static_cast<PINSModel*>(ctx->model);
     model->setGetNext(f);
 }
 
 extern "C" void GBsetNextStateAll(model_t ctx_, next_method_black_t f) {
     auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-    PINSModelBase* model = reinterpret_cast<PINSModelBase*>(ctx->model);
+    auto model = static_cast<PINSModel*>(ctx->model);
     model->setGetNextAll(f);
 }
 

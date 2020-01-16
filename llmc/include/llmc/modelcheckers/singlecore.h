@@ -94,8 +94,8 @@ public:
             _states++;
             stateQueueNew.push_back(insertedState.getState());
             _listener.writeState(this->getModel(), insertedState.getState(), length, slots);
-            _listener.writeTransition(stateID, insertedState.getState());
         }
+        _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
         _transitions++;
         return insertedState.getState();
     }
@@ -117,8 +117,8 @@ public:
             stateQueueNew.push_back(insertedState.getState());
             auto fsd = getState(ctx_, insertedState.getState());
             _listener.writeState(this->getModel(), insertedState.getState(), fsd->getLength(), fsd->getData());
-            _listener.writeTransition(stateID, insertedState.getState());
         }
+        _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
         _transitions++;
         return insertedState.getState();
     }
