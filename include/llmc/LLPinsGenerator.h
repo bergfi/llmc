@@ -1782,6 +1782,13 @@ public:
         ));
     }
 
+    void setDebugLocation(Value* V, std::string const& file, int linenr) {
+        Instruction* I = dyn_cast<Instruction>(V);
+        if(I) {
+            setDebugLocation(I, file, linenr);
+        }
+    }
+
     Value* getChunkPartOfPointer(Value* v) {
         v = builder.CreatePtrToInt(v, t_intptr);
         v = builder.CreateLShr(v, 32);
