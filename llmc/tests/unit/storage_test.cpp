@@ -21,11 +21,15 @@ TYPED_TEST_CASE(StorageTest, MyTypes);
 
 TYPED_TEST(StorageTest, BasicInsertLength2) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot states[] = {0, 1, 2, 3, 4, 5};
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[6];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(states)/sizeof(*states));
+    }
+    storage.init();
 
     stateIDs[1] = storage.insert(&states[1], 2, true);
     stateIDs[2] = storage.insert(&states[2], 2, true);
@@ -53,11 +57,15 @@ TYPED_TEST(StorageTest, BasicInsertLength2) {
 
 TYPED_TEST(StorageTest, BasicInsertLength4) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot states[] = {272, 273, 274, 275, 276, 277, 278, 279};
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[6];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(states)/sizeof(*states));
+    }
+    storage.init();
 
     stateIDs[1] = storage.insert(&states[1], 4, true);
     EXPECT_TRUE(stateIDs[1].isInserted());
@@ -87,11 +95,15 @@ TYPED_TEST(StorageTest, BasicInsertLength4) {
 
 TYPED_TEST(StorageTest, BasicDuplicateInsert) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot states[] = {0, 1, 2, 3, 4, 5};
     typename TypeParam::InsertedState stateIDs[6];
     typename TypeParam::StateID stateIDsFound;
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(states)/sizeof(*states));
+    }
+    storage.init();
 
     // First insert
     stateIDs[1] = storage.insert(&states[0], 4, true);
@@ -120,12 +132,16 @@ TYPED_TEST(StorageTest, BasicDuplicateInsert) {
 
 TYPED_TEST(StorageTest, BasicDeltaTransition) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot state1[] = {0, 1, 2, 3};
     typename TypeParam::StateSlot state2[] = {0, 1, 2, 4};
     typename TypeParam::InsertedState stateIDs[2];
     typename TypeParam::StateID stateIDsFound;
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
 
     stateIDs[0] = storage.insert(state1, 4, true);
     stateIDsFound = storage.find(state1, 4, true);
@@ -152,11 +168,15 @@ TYPED_TEST(StorageTest, BasicDeltaTransition) {
 
 TYPED_TEST(StorageTest, BasicLoopTransition) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot states[] = {0, 1, 2, 3};
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[4];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(states)/sizeof(*states));
+    }
+    storage.init();
 
     stateIDs[1] = storage.insert(&states[1], 2, true); // insert {1,2}
     stateIDsFound[1] = storage.find(&states[1], 2, true);
@@ -193,12 +213,15 @@ TYPED_TEST(StorageTest, BasicLoopTransition) {
 
 TYPED_TEST(StorageTest, MultiSlotGet) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot state1[] = {0, 1, 2, 3};
-
     typename TypeParam::InsertedState stateID;
     typename TypeParam::StateID stateIDFound;
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
 
     stateID = storage.insert(state1, 4, true);
     EXPECT_TRUE(stateID.isInserted());
@@ -214,14 +237,17 @@ TYPED_TEST(StorageTest, MultiSlotGet) {
 
 TYPED_TEST(StorageTest, MultiSlotLoopTransition) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot state1[] = {0, 1, 2, 3};
     typename TypeParam::StateSlot state2[] = {0, 1, 2, 4};
     typename TypeParam::StateSlot state3[] = {0, 1, 2, 3};
-
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[4];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
 
     stateIDs[1] = storage.insert(state1, 4, true);
     stateIDsFound[1] = storage.find(state1, 4, true);
@@ -247,14 +273,17 @@ TYPED_TEST(StorageTest, MultiSlotLoopTransition) {
 
 TYPED_TEST(StorageTest, MultiSlotLoopTransitionWithOffset) {
     TypeParam storage;
-    storage.init();
 
     typename TypeParam::StateSlot state1[] = {0, 1, 2, 3};
     typename TypeParam::StateSlot state2[] = {0, 1, 2, 4};
     typename TypeParam::StateSlot state3[] = {0, 1, 2, 3};
-
     typename TypeParam::InsertedState stateIDs[4];
     typename TypeParam::StateID stateIDsFound[4];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
 
     stateIDs[1] = storage.insert(state1, 4, true);
     stateIDsFound[1] = storage.find(state1, 4, true);
@@ -280,14 +309,16 @@ TYPED_TEST(StorageTest, MultiSlotLoopTransitionWithOffset) {
 
 TYPED_TEST(StorageTest, MultiSlotDiamondTransition) {
     TypeParam storage;
-//    storage.setRootScale(8);
-//    storage.setScale(8);
-    storage.init();
 
     typename TypeParam::StateSlot state1[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
     typename TypeParam::StateSlot state2[] = {0x11111111, 0x22222222, 0x33333333, 0x99999999};
     typename TypeParam::StateSlot state3[] = {0x88888888, 0x22222222, 0x33333333, 0x44444444};
     typename TypeParam::StateSlot state4[] = {0x88888888, 0x22222222, 0x33333333, 0x99999999};
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
 
     /*         ---> State 3 ----\
      *        /                  v
@@ -347,6 +378,57 @@ TYPED_TEST(StorageTest, MultiSlotDiamondTransition) {
     EXPECT_TRUE(stateIDFound.exists());
     EXPECT_EQ(stateIDs4c.getState(), stateIDFound);
     EXPECT_EQ(stateIDs4c.getState(), stateIDs[4].getState());
+}
+
+TYPED_TEST(StorageTest, Insert1to1000root) {
+    TypeParam storage;
+
+    const size_t maxLength = 1024;
+    typename TypeParam::StateSlot state[maxLength];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+
+    char c = 'A';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c) {
+        if(c == 'a') c = 'A';
+        state[i] = c;
+    }
+
+    for(size_t length = 2; length <= maxLength; length += 2) {
+        auto stateID = storage.insert(state, length, true);
+        EXPECT_TRUE(stateID.isInserted());
+        auto stateIDFound = storage.find(state, length, true);
+        EXPECT_TRUE(stateIDFound.exists());
+    }
+}
+
+TYPED_TEST(StorageTest, Insert1to1000nonroot) {
+    TypeParam storage;
+
+    const size_t maxLength = 1024;
+    typename TypeParam::StateSlot state[maxLength];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+
+    char c = 'A';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c) {
+        if(c == 'a') c = 'A';
+        state[i] = c;
+    }
+
+    for(size_t length = 2; length <= maxLength; length++) {
+        auto stateID = storage.insert(state, length, false);
+        auto stateIDFound = storage.find(state, length, false);
+        EXPECT_TRUE(stateIDFound.exists());
+    }
 }
 
 int main(int argc, char** argv) {

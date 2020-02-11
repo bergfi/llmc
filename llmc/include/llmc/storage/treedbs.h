@@ -19,15 +19,9 @@ public:
     }
 
     void init() {
-        _stateLength = 16;
-        _store = TreeDBSLLcreate_dm(16, 24, 2, nullptr, 0, 0, 0);
-//        std::cout << "Storage initialized with scale " << _store.getScale() << ", root scale " << _store.getRootScale() << std::endl;
-    }
-
-    void setScale(size_t scale) {
-    }
-
-    void setRootScale(size_t scale) {
+        _store = TreeDBSLLcreate_dm(_stateLength, 24, 2, nullptr, 0, 0, 0);
+        assert(_store);
+        std::cout << "Storage initialized with state length " << _stateLength << std::endl;
     }
 
     using StateSlot = StorageInterface::StateSlot;
@@ -89,7 +83,7 @@ public:
     InsertedState insert(const StateSlot* state, size_t length, bool isRoot) {
         tree_ref_t ref;
         if(length > getMaxStateLength()) {
-            fprintf(stderr, "Max state length exceeded: %zu\n", length);
+            fprintf(stderr, "Max state length exceeded: %zu < %zu\n", getMaxStateLength(), length);
             abort();
         }
         auto seen = TreeDBSLLfopZeroExtend_ref(_store, (int*)state, length, isRoot, true, &ref);
@@ -151,7 +145,7 @@ public:
     }
 
     static bool constexpr stateHasFixedLength() {
-        return false;
+        return true;
     }
 
     static bool constexpr stateHasLengthInfo() {
@@ -160,6 +154,10 @@ public:
 
     static bool constexpr needsThreadInit() {
         return false;
+    }
+
+    size_t setMaxStateLength(size_t stateLength) {
+         _stateLength = stateLength;
     }
 
     size_t getMaxStateLength() const {

@@ -93,6 +93,7 @@ extern "C" {
 int pins_chunk_put(void* ctx_, int type, chunk c) {
     auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
     auto model = static_cast<PINSModel*>(ctx->model);
+//    printf("ctx_:%p ctx:%p %p %p\n", ctx_, ctx, ctx->model, model);
     return model->pins_chunk_put(ctx, type, c);
 }
 chunk pins_chunk_get(void* ctx_, int type, int idx) {
@@ -171,7 +172,6 @@ extern "C" void lts_type_set_state_name(lts_type_t ltsType, int stateIndex, cons
 }
 extern "C" void lts_type_set_edge_label_count(lts_type_t ltsType, int count) {
     ltsType->edge_label.resize(count);
-    printf("lts_type_set_edge_label_count(%x, %u)\n", ltsType, count);
 }
 extern "C" void lts_type_set_edge_label_typeno(lts_type_t ltsType, int index, int type) {
     ltsType->edge_label.reserve(index);

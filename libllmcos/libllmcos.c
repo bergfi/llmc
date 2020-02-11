@@ -13,7 +13,7 @@ typedef struct {
 const int START_BYTES = 8;
 
 void llmc_os_memory_init(void* ctx, int data_typeno, __int32_t* ci_data) {
-    printf("llmc_os_memory_init: %p %i %p\n", ctx, data_typeno, ci_data);
+//    printf("llmc_os_memory_init: %p %i %p\n", ctx, data_typeno, ci_data);
     chunk c_data;
 
     char a[START_BYTES];
@@ -27,7 +27,7 @@ void llmc_os_memory_init(void* ctx, int data_typeno, __int32_t* ci_data) {
 }
 
 __int32_t llmc_os_memory_malloc(char* data, __int32_t bytes) {
-    printf("llmc_os_memory_malloc: %i %i\n", data, bytes);
+//    printf("llmc_os_memory_malloc: %i %i\n", data, bytes);
     int* d = (int*)data;
     int current = *d;
     *((int*)d) += bytes;
@@ -54,11 +54,11 @@ typedef struct {
 int llmc_list_find(void* list, int len, __uint64_t key, void** val) {
     list_entry* m = (list_entry*)list;
     list_entry* me = m + len/sizeof(list_entry);
-    printf("[list:%p,%i] looking for %x\n", list, len, key);
+//    printf("[list:%p,%i] looking for %x\n", list, len, key);
     while(m < me) {
-        printf("  - %x\n", m->key);
+//        printf("  - %x\n", m->key);
         if(m->key == key) {
-            printf("    -> %x\n", m->val);
+//            printf("    -> %x\n", m->val);
             *val = m->val;
             return 1;
         }
@@ -66,7 +66,6 @@ int llmc_list_find(void* list, int len, __uint64_t key, void** val) {
     }
     return 0;
 }
-
 
 
 

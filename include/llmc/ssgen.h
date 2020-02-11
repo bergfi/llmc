@@ -79,14 +79,12 @@ public:
     }
 
     void setLength(int length) {
-        printf("SET LENGTH %i\n", length); fflush(stdout);
         _length = length;
     }
 
     int getLength() const { return _length; }
 
     void setTransitionGroups(int tgroups) {
-        printf("SET TGROUPS %i\n", tgroups); fflush(stdout);
         _tgroups = tgroups;
     }
 

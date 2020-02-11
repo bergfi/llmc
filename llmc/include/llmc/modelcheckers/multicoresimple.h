@@ -34,8 +34,12 @@ public:
     }
 
     void go() {
+//        if constexpr(_storage.stateHasFixedLength()) {
+//            _storage.setStateLength(_m->getStateLength());
+//        }
         _storage.init();
         Context ctx(this, this->_m);
+        _m->init(&ctx);
         StateID init = this->_m->getInitial(&ctx).getData();
         System::Timer timer;
 
@@ -187,6 +191,8 @@ public:
         _rootTypeID = typeID;
         return true;
     }
+
+    Storage& getStorage() { return _storage; }
 
 protected:
     mutex_type mtx;

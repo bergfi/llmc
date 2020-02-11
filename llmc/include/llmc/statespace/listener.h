@@ -68,15 +68,14 @@ public:
 
     void writeState(Model* model, StateID const& stateID, size_t length, const StateSlot* slots) {
         out << "\ts" << stateID.getData();
-        out << " [shape=record, label=\"{" << stateID.getData();
 
-        out << "|{{state|{";
-        writeVector(out, model, length, slots);
-        out << "}}}";
+//        out << " [shape=record, label=\"{" << stateID.getData();
+//        out << "|{{state|{";
+//        writeVector(out, model, length, slots);
+//        out << "}}}";
+//        out << "}\"]";
 
-        out << "}\"]";
-
-        out << std::endl;
+        out << ";" << std::endl;
     }
 
     void writeTransition(StateID const& from, StateID const& to, TransitionInfo const& tInfo) {
@@ -88,7 +87,6 @@ public:
             out << " []";
         }
         out << ";" << std::endl;
-        std::cerr << from.getData() << " -> " << to.getData() << std::endl;
     }
 
     void writeVector(ostream& out, Model* model, size_t length, const StateSlot* slots) {

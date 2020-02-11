@@ -75,7 +75,7 @@ public:
     InsertedState insert(FullState* state) {
         chaintablegenericUBVKmem::HashTable<FullState>::HTE* id = nullptr;
         bool seen = _store.insert(*state, id);
-//        fprintf(stderr, "seen: %u\n", seen);
+        fprintf(stderr, "insert: %p\n", id);
         return InsertedState((uintptr_t)id, seen);
     }
 
@@ -122,6 +122,7 @@ public:
     FullState* get(StateID id, bool isRoot) {
         auto hte = (chaintablegenericUBVKmem::HashTable<FullState>::HTE*)id.getData();
 //        FullState* state = (FullState*)&hte->_length;
+        fprintf(stderr, "get: %p\n", hte);
         auto state = FullState::createExternal(isRoot, hte->_length / sizeof(StateSlot), (StateSlot*)hte->_keyData);
         if(state->isRoot() == isRoot) {
             return state;

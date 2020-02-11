@@ -80,9 +80,11 @@ public:
 //    using Context = ContextBase<VModel<MODELCHECKERINTERFACE>>;
     using Context = VContext<STORAGE>;
 
+    virtual void init(Context* ctx) = 0;
+
     virtual size_t getNextAll(StateID const& s, Context* ctx) = 0;
     virtual StateID getInitial(Context* ctx) = 0;
     virtual llmc::statespace::Type* getStateVectorType() = 0;
     virtual TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx, TransitionInfoUnExpanded const& tinfo_) const = 0;
-
+    virtual size_t getStateLength() const = 0;
 };

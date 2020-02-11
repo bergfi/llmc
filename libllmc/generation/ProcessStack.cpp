@@ -306,12 +306,12 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             auto retValVoidP = builder.CreateIntToPtr(retVal, gen->t_voidp);
             gen->builder.CreateStore(retValVoidP, newTres_res);
 
-            builder.CreateCall( gen->pins("printf")
-                    , { gen->generateGlobalString("return a value %x %u\n")
-                      , tid
-                      , retVal
-                      }
-                    );
+//            builder.CreateCall( gen->pins("printf")
+//                    , { gen->generateGlobalString("return a value %x %u\n")
+//                      , tid
+//                      , retVal
+//                      }
+//                    );
 
             // Append the new tuple to the list of tuples
             ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);

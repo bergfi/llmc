@@ -32,9 +32,16 @@ public:
     void go() {
         _listener.init();
         _storage.init();
+
         Context ctx(this, this->_m);
+        _m->init(&ctx);
+        std::cout << "State vector is of type" << *_m->getStateVectorType() << std::endl;
         StateID init = this->_m->getInitial(&ctx);
+
+        printf("Initial state is %u long\n", _storage.determineLength(init));
+
         System::Timer timer;
+//        printf("modelchecker says ctx:%p model:%p\n", &ctx, ctx.model);
         if(init.exists()) {
             stateQueueNew.emplace_back(init);
             int level = 0;
@@ -43,7 +50,7 @@ public:
             size_t statesLastCheck = _states;
 
             do {
-                printf("level %i has %i states\n", level, _states);
+//                printf("level %i has %i states\n", level, _states);
                 level++;
                 int level_states = 0;
                 stateQueueNew.swap(stateQueue);
@@ -81,7 +88,9 @@ public:
         if(insertedState.isInserted()) {
             _listener.writeState(this->getModel(), insertedState.getState(), length, slots);
         }
-        return llmc::storage::StorageInterface::InsertedState(insertedState.getState(), insertedState.isInserted());
+        auto r = llmc::storage::StorageInterface::InsertedState(insertedState.getState(), insertedState.isInserted());
+//        std::cout << "[SCM] newState(" << typeID << ", " << length << ") -> " << r << std::endl;
+        return r;
     }
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots, TransitionInfoUnExpanded const& tinfo) override {
@@ -152,6 +161,7 @@ public:
             return _storage.get(s, false);
         } else {
             size_t stateLength = _storage.determineLength(s);
+            assert(stateLength);
             llmc::storage::StorageInterface::FullState* dest = (FullState*)ctx->allocator.allocate(sizeof(llmc::storage::FullStateData<StateSlot>) / sizeof(StateSlot) + stateLength);
             llmc::storage::StorageInterface::FullState::create(dest, false, stateLength);
             _storage.get(dest->getDataToModify(), s, false);
@@ -183,6 +193,8 @@ public:
         _rootTypeID = typeID;
         return true;
     }
+
+    STORAGE& getStorage() { return _storage; }
 
 protected:
     StateTypeID _rootTypeID;

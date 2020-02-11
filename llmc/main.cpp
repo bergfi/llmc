@@ -152,6 +152,7 @@ void goOld(std::string soFile) {
 
 template<typename Storage, template <typename, typename,template<typename,typename> typename> typename ModelChecker>
 void goPINS(std::string soFile) {
+    Settings& settings = Settings::global();
 
     ofstream f;
     f.open("out.dot", std::fstream::trunc);
@@ -169,6 +170,18 @@ void goPINS(std::string soFile) {
                                 , VModel<llmc::storage::StorageInterface>
                                 > printer(f);
     MC mc(model, printer);
+
+//    VModel<llmc::storage::StorageInterface>* model = new LLVMModel();
+//    llmc::statespace::DotPrinter< ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>
+//                                , VModel<llmc::storage::StorageInterface>
+//                                > printer(f);
+//    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
+
+    if constexpr(Storage::stateHasFixedLength()) {
+        if(settings["storage.fixedvectorsize"].asUnsignedValue() > 0) {
+            mc.getStorage().setMaxStateLength(settings["storage.fixedvectorsize"].asUnsignedValue());
+        }
+    }
 
     mc.go();
     f.close();

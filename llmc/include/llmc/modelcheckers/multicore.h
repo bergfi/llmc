@@ -49,8 +49,9 @@ public:
     }
 
     void go() {
-        _storage.init();
         Context ctx(this, this->_m);
+        _storage.init();
+        _m->init(&ctx);
         StateID init = this->_m->getInitial(&ctx).getData();
         System::Timer timer;
 
@@ -254,6 +255,8 @@ public:
         _rootTypeID = typeID;
         return true;
     }
+
+    STORAGE& getStorage() { return _storage; }
 
 protected:
     mutex_type mtx;

@@ -130,11 +130,11 @@ public:
     using StateTypeID = uint16_t;
     using FullState = FullStateData<StateSlot>;
 
-    struct StateID {
+    struct StateID64 {
     public:
-        constexpr StateID(): _data(0) {}
+        constexpr StateID64(): _data(0) {}
 
-        constexpr StateID(uint64_t const& d): _data(d) {}
+        constexpr StateID64(uint64_t const& d): _data(d) {}
         bool exists() const {
             return _data != 0;
         }
@@ -143,22 +143,67 @@ public:
             return _data;
         }
 
-        static constexpr StateID NotFound() {
-            return StateID(0);
+        static constexpr StateID64 NotFound() {
+            return StateID64(0);
         }
 
-        constexpr bool operator==(StateID const& other) const {
+        constexpr bool operator==(StateID64 const& other) const {
             return _data == other._data;
         }
 
-        constexpr bool operator!=(StateID const& other) const {
+        constexpr bool operator!=(StateID64 const& other) const {
             return _data != other._data;
         }
 
+        friend std::ostream& operator<<(std::ostream& os, StateID64 const& state) {
+            os << "(" << std::hex << state.getData() << ")";
+        }
     protected:
         uint64_t _data;
 
     };
+
+    struct StateID32 {
+    public:
+        constexpr StateID32(): _data(0) {}
+
+        constexpr StateID32(uint32_t const& d): _data(d) {}
+        constexpr StateID32(int32_t const& d): _data((uint32_t)d) {}
+        constexpr StateID32(uint64_t const& d): _data(d) {
+            assert(d == _data);
+        }
+        constexpr StateID32(int64_t const& d): _data((uint32_t)d) {
+            assert(d == _data);
+        }
+        bool exists() const {
+            return _data != 0;
+        }
+
+        constexpr uint32_t getData() const {
+            return _data;
+        }
+
+        static constexpr StateID32 NotFound() {
+            return StateID32((uint32_t)0);
+        }
+
+        constexpr bool operator==(StateID32 const& other) const {
+            return _data == other._data;
+        }
+
+        constexpr bool operator!=(StateID32 const& other) const {
+            return _data != other._data;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, StateID32 const& state) {
+            os << "(" << std::hex << state.getData() << ")";
+        }
+    protected:
+        uint32_t _data;
+
+    };
+
+    using StateID = StateID64;
 
     class InsertedState {
     public:
@@ -173,6 +218,9 @@ public:
 
         bool isInserted() const {
             return _inserted;
+        }
+        friend std::ostream& operator<<(std::ostream& os, InsertedState const& insertedState) {
+            os << insertedState.getState() << (insertedState.isInserted() ? "+" : "");
         }
     private:
         StateID _stateID;

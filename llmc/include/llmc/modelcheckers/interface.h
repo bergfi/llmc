@@ -132,6 +132,7 @@ struct VTransitionInfo {
 template<typename STORAGE>
 class VModelChecker {
 public:
+    using Storage = STORAGE;
     using StateSlot = typename STORAGE::StateSlot;
     using StateTypeID = typename STORAGE::StateTypeID;
     using StateID = typename STORAGE::StateID;
@@ -158,6 +159,7 @@ public:
     }
 
     VModel<STORAGE>* getModel() const { return _m; }
+//    STORAGE& getStorage() const = 0;
 
 protected:
     VModel<STORAGE>* _m;

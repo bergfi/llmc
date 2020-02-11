@@ -226,7 +226,7 @@ public:
     llvm::FunctionType* t_pins_getnext;
     llvm::FunctionType* t_pins_getnextall;
 
-    static int const MAX_THREADS = 2;
+    static int const MAX_THREADS = 4;
     static int const BITWIDTH_STATEVAR = 32;
     static int const BITWIDTH_INT = 32;
     llvm::Constant* t_statevector_size;
@@ -667,7 +667,7 @@ public:
             BasicBlock* entry = BasicBlock::Create(ctx, "entry" , f_pins_getnext);
             builder.SetInsertPoint(entry);
 
-            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] trying transition group\n"), grp});
+//            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] trying transition group\n"), grp});
 
 
             // FIXME: should not be 'global'
@@ -731,7 +731,7 @@ public:
 
             // BB for when a transition group finds a transition
             builder.SetInsertPoint(end_report);
-            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] found a new transition\n"), grp});
+//            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] found a new transition\n"), grp});
 
             // FIXME: mogelijk gaat edgeLabelValue fout wanneer 1 label niet geset is maar een andere wel
 
@@ -746,7 +746,7 @@ public:
 
             // BB for when a transition group does not find a transition
             builder.SetInsertPoint(end);
-            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] no\n"), grp});
+//            builder.CreateCall(pins("printf"), {generateGlobalString("[%2i] no\n"), grp});
             builder.CreateRet(ConstantInt::get(t_int, 0));
 
             // From entry, branch to the switch
@@ -1093,6 +1093,7 @@ public:
                 builder.SetInsertPoint(ti->nextState);
 
                 // Create BBs
+                auto bb_transition_condition_check = BasicBlock::Create(ctx, "bb_transition_condition_check", f_pins_getnext);
                 auto bb_transition = BasicBlock::Create(ctx, "bb_transition", f_pins_getnext);
                 auto bb_end = BasicBlock::Create(ctx, "bb_end", f_pins_getnext);
 
@@ -1105,11 +1106,12 @@ public:
                 auto pc_check = builder.CreateICmpEQ( pc
                                                     , ConstantInt::get(t_int, programLocations[ti->instructions.front()])
                                                     );
-                builder.CreateCondBr(pc_check, bb_transition, bb_end);
+
+                builder.CreateCondBr(pc_check, bb_transition_condition_check, bb_end);
 
                 // If the PC is a match
                 {
-                    builder.SetInsertPoint(bb_transition);
+                    builder.SetInsertPoint(bb_transition_condition_check);
                     assert(t_statevector_size);
 
                     // Copy the SV into a local one
@@ -1120,6 +1122,19 @@ public:
                                                    , t_statevector_size
                                                    );
                     setDebugLocation(cpy, __FILE__, __LINE__);
+
+                    if(ti->instructions.size() > 0) {
+                        auto instruction_condition = generateConditionForInstruction(gctx, ti->instructions[0]);
+                        if(instruction_condition) {
+                            builder.CreateCondBr(instruction_condition, bb_transition, bb_end);
+                        } else {
+                            builder.CreateBr(bb_transition);
+                        }
+                    } else {
+                        builder.CreateBr(bb_transition);
+                    }
+
+                    builder.SetInsertPoint(bb_transition);
 
                     // Update the destination PC
                     builder.CreateStore(ConstantInt::get(t_int, programLocations[ti->instructions.back()->getNextNode()]), dst_pc);
@@ -1262,7 +1277,7 @@ public:
             builder.CreateCondBr(cond, main_start, f_pins_getnext_end);
 
             builder.SetInsertPoint(main_start);
-            builder.CreateCall(pins("printf"), {generateGlobalString("main_start\n")});
+//            builder.CreateCall(pins("printf"), {generateGlobalString("main_start\n")});
             auto cpy = builder.CreateMemCpy(gctx_copy.svout, gctx_copy.svout->getPointerAlignment(pinsModule->getDataLayout()), src, src->getParamAlignment(), t_statevector_size);
             setDebugLocation(cpy, __FILE__, __LINE__);
 //            for(int i = 0; i < MAX_THREADS; ++i) {
@@ -1334,6 +1349,7 @@ public:
             case Instruction::Br:
             case Instruction::Switch:
             case Instruction::IndirectBr:
+                return true;
             case Instruction::Invoke:
             case Instruction::Resume:
                 return false;
@@ -1371,6 +1387,19 @@ public:
         }
     }
 
+    bool instructionsCanCollapse(Instruction* before, Instruction* after) {
+        if(before->getOpcode() == Instruction::Call && after->getOpcode() == Instruction::Call) {
+            auto beforeCall = dyn_cast<CallInst>(before);
+            auto afterCall = dyn_cast<CallInst>(after);
+            Function* beforeCallFunction = beforeCall->getCalledFunction();
+            Function* afterCallFunction = afterCall->getCalledFunction();
+            if(beforeCallFunction->getName().equals("pthread_create") && afterCallFunction->getName().equals("pthread_create")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * @brief Create transition groups for the Instruction @c I
      * @param I The LLVM Instruction to create transition groups for
@@ -1398,20 +1427,27 @@ public:
             It++;
         }
 
-        do {
+        if(It != IE) {
+            for(;;) {
 
-            auto I = &*It;
-            rdesc << I;
+                auto I = &*It;
+                rdesc << I;
 
-            // Assign a PC to the instruction if it does not have one yet
-            if(programLocations[I] == 0) {
-                programLocations[I] = nextProgramLocation++;
+                // Assign a PC to the instruction if it does not have one yet
+                if(programLocations[I] == 0) {
+                    programLocations[I] = nextProgramLocation++;
+                }
+
+                instructions.push_back(I);
+
+                It++;
+
+                if(It == IE || (!isCollapsableInstruction(&*It) && !instructionsCanCollapse(I, &*It))) {
+                    break;
+                }
+
             }
-
-            instructions.push_back(I);
-
-            It++;
-        } while(It != IE && isCollapsableInstruction(&*It));
+        }
 
         if(programLocations[&*It] == 0) {
             programLocations[&*It] = nextProgramLocation++;
@@ -1665,6 +1701,128 @@ public:
         return generateNextStateForInstructionValueMapped(gctx, I);
     }
 
+    Value* generateConditionForInstruction(GenerationContext* gctx, Instruction* I) {
+
+        // Handle the instruction more specifically
+        switch(I->getOpcode()) {
+            case Instruction::Alloca:
+            case Instruction::Load:
+            case Instruction::Store:
+            case Instruction::Ret:
+            case Instruction::Br:
+            case Instruction::Switch:
+            case Instruction::IndirectBr:
+            case Instruction::Invoke:
+            case Instruction::Resume:
+            case Instruction::Unreachable:
+            case Instruction::CleanupRet:
+            case Instruction::CatchRet:
+            case Instruction::CatchSwitch:
+            case Instruction::GetElementPtr:
+            case Instruction::Fence:
+            case Instruction::AtomicCmpXchg:
+            case Instruction::AtomicRMW:
+            case Instruction::CleanupPad:
+            case Instruction::PHI:
+                return nullptr;
+            case Instruction::Call:
+                return generateConditionForCall(gctx, dyn_cast<CallInst>(I));
+            case Instruction::VAArg:
+            case Instruction::ExtractElement:
+            case Instruction::InsertElement:
+            case Instruction::ShuffleVector:
+            case Instruction::ExtractValue:
+            case Instruction::InsertValue:
+            case Instruction::LandingPad:
+                roout << "Unsupported instruction: " << *I << "\n";
+                assert(0);
+                return nullptr;
+            default:
+                break;
+        }
+
+        // The default behaviour
+        return nullptr;
+    }
+
+    Value* generateConditionForCall(GenerationContext* gctx, CallInst* I) {
+        assert(I);
+
+        // If this is inline assembly
+        if(I->isInlineAsm()) {
+            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledValue());
+            out.reportNote("Found ASM: " + inlineAsm->getAsmString());
+            assert(0);
+        } else {
+
+            // If this is a declaration, there is no body within the LLVM model,
+            // thus we need to handle it differently.
+            Function* F = I->getCalledFunction();
+            if(!F) {
+                roout << "Function call calls null: " << *I << "\n";
+                roout.flush();
+                abort();
+            }
+            if(F->isDeclaration()) {
+
+                auto it = gctx->gen->hookedFunctions.find(F->getName());
+
+                // If this is a hooked function
+                if(it != gctx->gen->hookedFunctions.end()) {
+                } else if(F->isIntrinsic()) {
+                } else if(F->getName().equals("pthread_create")) {
+                } else if(F->getName().equals("pthread_join")) {
+                    // int pthread_join(pthread_t thread, void **value_ptr);
+
+                    ChunkMapper cm_tres = ChunkMapper(gctx, type_threadresults);
+
+                    auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+                    auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
+                    auto tres_p = lts["tres"].getValue(gctx->svout);
+                    auto results = cm_tres.generateGet(tres_p);
+                    auto results_data = generateChunkGetData(results);
+                    auto results_len = generateChunkGetLen(results);
+
+                    // Load the memory by making a copy
+                    ChunkMapper cm_memory(gctx, type_memory);
+                    auto chunkMemory = lts["processes"][gctx->thread_id]["memory"].getValue(gctx->svout);
+                    auto sv_memorydata = generateChunkGetData(cm_memory.generateGet(chunkMemory));
+
+                    // Load the TID of the thread to join
+                    auto tid_p_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
+                    tid_p_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_p_in_program, t_int64p);
+                    auto tid = builder.CreateLoad(tid_p_in_program, t_intp);
+
+                    // Pointer to where the result of the thread will be stored
+                    auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
+                    storeResult = builder.CreatePointerCast(storeResult, t_voidpp);
+
+                    // Find the result in the list of thread results
+                    auto llmc_list_find = pins("llmc_list_find");
+                    auto found = builder.CreateCall( llmc_list_find
+                            , { results_data
+                                                             , results_len
+                                                             , tid
+                                                             , storeResult
+                                                     }
+                    );
+
+//                    return ConstantInt::get(IntegerType::getInt1Ty(found->getContext()), 0);
+
+                    return builder.CreateICmpNE(found, ConstantInt::get(found->getType(), 0));
+
+
+                } else {
+                    out.reportError("Unhandled function call: " + F->getName().str());
+                }
+
+                // Otherwise, there is an LLVM body available, so it is modeled.
+            } else {
+            }
+        }
+        return nullptr;
+    }
+
     /**
      * @brief Generates the next-state relation for the ReturnInst @c I
      * @param gctx GenerationContext
@@ -1704,7 +1862,7 @@ public:
         setDebugLocation(store, __FILE__, __LINE__);
 
         // Debug
-        builder.CreateCall(pins("printf"), {generateGlobalString("stored %i to %p\n"), ptr, ret});
+//        builder.CreateCall(pins("printf"), {generateGlobalString("stored %i to %p\n"), ptr, ret});
 
         // Action label
         std::string str;
@@ -2079,16 +2237,6 @@ public:
                                            , tid_p_in_program
                                            );
 
-                        // Debug print
-                        builder.CreateCall( pins("printf")
-                                          , { generateGlobalString("Storing %zu to pthread_t %p %p %p\n")
-                                            , builder.CreateIntCast(threadsStarted, t_int64, false)
-                                            , tid_p_in_program
-                                            , registers
-                                            , sv_memorydata
-                                            }
-                                          );
-
                         // Upload the new memory chunk
                         auto newMem = cm_memory.generatePut(sv_memorylen, sv_memorydata);
                         builder.CreateStore(newMem, chunkMemory);
@@ -2130,16 +2278,8 @@ public:
 
                     // Load the TID of the thread to join
                     auto tid_p_in_program = vMapPointer(registers, sv_memorydata, I->getArgOperand(0), t_int64p);
-                    tid_p_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tidPointer, t_int64p);
+                    tid_p_in_program = builder.CreatePointerBitCastOrAddrSpaceCast(tid_p_in_program, t_int64p);
                     auto tid = builder.CreateLoad(tid_p_in_program, t_intp);
-
-                    // Debug print
-                    builder.CreateCall( pins("printf")
-                                      , { generateGlobalString("tid loaded %u from %p\n")
-                                        , tid
-                                        , tid_p_in_program
-                                        }
-                                      );
 
                     // Pointer to where the result of the thread will be stored
                     auto storeResult = vReg(registers, *I->getParent()->getParent(), "pthread_join_result", I);
@@ -2156,16 +2296,16 @@ public:
                                                    );
 
                     // Generate an if for whether or not the specific thread is finished or not
-                    llvmgen::If genIf(builder, "pthread_join_result_not_found");
-                    genIf.setCond(builder.CreateICmpEQ(found, ConstantInt::get(found->getType(), 0)));
-                    auto BBTrue = genIf.getTrue();
-                    genIf.generate();
-
-                    // If it is not found, inhibit the transition report
-                    builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
-                    builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
-
-                    builder.SetInsertPoint(genIf.getFinal());
+//                    llvmgen::If genIf(builder, "pthread_join_result_not_found");
+//                    genIf.setCond(builder.CreateICmpEQ(found, ConstantInt::get(found->getType(), 0)));
+//                    auto BBTrue = genIf.getTrue();
+//                    genIf.generate();
+//
+//                    // If it is not found, inhibit the transition report
+//                    builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
+//                    builder.CreateStore(ConstantInt::get(t_int, programLocations[I]), dst_pc);
+//
+//                    builder.SetInsertPoint(genIf.getFinal());
 
     //                type_threadresults
 
