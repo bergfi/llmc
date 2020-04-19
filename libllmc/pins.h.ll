@@ -1732,3 +1732,11 @@ declare void @pins_chunk_put_at(%grey_box_model*, i32, %unnamed_struct_16, i32)
 declare i32 @pins_chunk_put(%grey_box_model*, i32, %unnamed_struct_16)
 
 declare %unnamed_struct_16 @pins_chunk_get(%grey_box_model*, i32, i32)
+
+declare i64 @pins_chunk_put64(%grey_box_model*, i32, %unnamed_struct_16)
+
+declare i64 @pins_chunk_cam64(%grey_box_model*, i32, i64, i32, i32*, i32)
+
+declare i64 @pins_chunk_getpartial64(%grey_box_model*, i32, i64, i32, i32*, i32)
+
+declare %unnamed_struct_16 @pins_chunk_get64(%grey_box_model*, i32, i64)

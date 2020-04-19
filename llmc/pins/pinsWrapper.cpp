@@ -107,6 +107,27 @@ int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int le
     return model->pins_chunk_cam(ctx, type, idx, offset, data, len);
 }
 
+__attribute__ ((visibility ("default")))  uint64_t pins_chunk_put64(void* ctx_, int type, chunk c) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    return model->pins_chunk_put64(ctx, type, c);
+}
+void pins_chunk_getpartial64(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    model->pins_chunk_getpartial64(ctx, type, idx, offset, data, len);
+}
+chunk pins_chunk_get64(void* ctx_, int type, uint64_t idx) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    return model->pins_chunk_get64(ctx, type, idx);
+}
+uint64_t pins_chunk_cam64(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    return model->pins_chunk_cam64(ctx, type, idx, offset, data, len);
+}
+
 //int pins_chunk_put(void* ctx_, int type, chunk c) {
 //    auto mc = (ssgen*)ctx_;
 //    return mc->pins_chunk_put(mc, type, c);
@@ -160,25 +181,27 @@ extern "C" int lts_type_add_type(lts_type_t ltsType, const char* name, int* is_n
     return size;
 }
 extern "C" void lts_type_set_state_length(lts_type_t ltsType, int length) {
+    printf("lts_type_set_state_length(%p, %u)\n", ltsType, length);
     ltsType->state_description.resize(length);
 }
 extern "C" void lts_type_set_state_typeno(lts_type_t ltsType, int stateIndex, int typeIndex) {
-    ltsType->state_description.reserve(stateIndex);
+    ltsType->state_description.reserve(stateIndex + 1);
     ltsType->state_description[stateIndex].type = typeIndex;
 }
 extern "C" void lts_type_set_state_name(lts_type_t ltsType, int stateIndex, const char* name) {
-    ltsType->state_description.reserve(stateIndex);
+    ltsType->state_description.reserve(stateIndex + 1);
     ltsType->state_description[stateIndex].name = name;
 }
 extern "C" void lts_type_set_edge_label_count(lts_type_t ltsType, int count) {
+    printf("lts_type_set_edge_label_count(%p, %u)\n", ltsType, count);
     ltsType->edge_label.resize(count);
 }
 extern "C" void lts_type_set_edge_label_typeno(lts_type_t ltsType, int index, int type) {
-    ltsType->edge_label.reserve(index);
+    ltsType->edge_label.reserve(index + 1);
     ltsType->edge_label[index].type = type;
 }
 extern "C" void lts_type_set_edge_label_name(lts_type_t ltsType, int index, const char* name) {
-    ltsType->edge_label.reserve(index);
+    ltsType->edge_label.reserve(index + 1);
     ltsType->edge_label[index].name = name;
 }
 extern "C" void lts_type_set_format(lts_type_t, int, data_format_t) {}

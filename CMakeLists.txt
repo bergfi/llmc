@@ -17,6 +17,9 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_PROFILE "-pg")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g ${CMAKE_CXX_FLAGS_RELEASE}")
 
+#set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+#set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+
 find_package(LLVM REQUIRED CONFIG)
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_FLAGS} -fno-rtti -fexceptions")
 llvm_map_components_to_libnames(LLVM_LIBS core interpreter irreader)

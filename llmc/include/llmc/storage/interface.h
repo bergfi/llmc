@@ -1,6 +1,5 @@
 #pragma once
 
-#include <config.h>
 #include <assertions.h>
 
 #include <cstring>
@@ -12,47 +11,53 @@ namespace llmc::storage {
 template<typename StateSlot>
 struct FullStateData {
 
-    static const size_t OFFSET_TYPE = 0;
-    static const size_t BITS_TYPE = 24;
+    static const size_t OFFSET_TYPE = 24;
+    static const size_t BITS_TYPE = 8;
     static const size_t MASK_TYPE = ((1ULL << BITS_TYPE) - 1) << OFFSET_TYPE;
 
-    static const size_t MASK_EXTERNALDATA = (1ULL << 31);
+    static const size_t MASK_EXTERNALDATA = (1ULL);
 
     static FullStateData* createExternal(bool isRoot, size_t length, const StateSlot* data) {
         FullStateData* fsd = (FullStateData*)malloc(sizeof(FullStateData));
-        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE) | MASK_EXTERNALDATA;
-        fsd->_length = length;
+        fsd->_misc = MASK_EXTERNALDATA;
+        fsd->_lengthAndType = length | (((size_t)!isRoot) << OFFSET_TYPE);
         fsd->_externalData = data;
         return fsd;
     }
 
-    static FullStateData* create(bool isRoot, size_t length, StateSlot* data) {
+    static FullStateData* create(bool isRoot, size_t length, const StateSlot* data) {
         FullStateData* fsd = (FullStateData*)malloc(sizeof(_header) + length * sizeof(StateSlot));
-        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
-        fsd->_length = length;
+        fsd->_misc = 0;
+        fsd->_lengthAndType = length | (((size_t)!isRoot) << OFFSET_TYPE);
         memcpy(fsd->_data, data, length * sizeof(StateSlot));
         return fsd;
     }
 
     static FullStateData* create(bool isRoot, size_t length) {
         FullStateData* fsd = (FullStateData*)malloc(sizeof(_header) + length * sizeof(StateSlot));
-        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
-        fsd->_length = length;
+        fsd->_misc = 0;
+        fsd->_lengthAndType = length | (((size_t)!isRoot) << OFFSET_TYPE);
         return fsd;
     }
 
     static FullStateData* create(FullStateData* fsd, bool isRoot, size_t length) {
-        fsd->_misc = (((size_t)!isRoot) << OFFSET_TYPE);
-        fsd->_length = length;
+        fsd->_misc = 0;
+        fsd->_lengthAndType = length | (((size_t)!isRoot) << OFFSET_TYPE);
         return fsd;
     }
 
-    static void destroy(FullStateData* d) {
-        free(d);
+    void destroy() {
+        if(this->_misc & MASK_EXTERNALDATA) {
+            free(this);
+        }
+    }
+
+    size_t getType() const {
+        return _lengthAndType >> OFFSET_TYPE;
     }
 
     size_t getLength() const {
-        return _length;
+        return _lengthAndType & 0xFFFFFFULL;
     }
 
     size_t getLengthInBytes() const {
@@ -73,22 +78,22 @@ struct FullStateData {
     }
 
     bool isRoot() const {
-        return !(_misc & MASK_TYPE);
+        return !(_lengthAndType & MASK_TYPE);
     }
 
     bool equals(FullStateData const& other) const {
-        if(_header != other._header) return false;
+        if(_lengthAndType != other._lengthAndType) return false;
 
         auto thisData = _misc & MASK_EXTERNALDATA ? (void*)_externalData : (void*)_data;
         auto otherData = other._misc & MASK_EXTERNALDATA ? (void*)other._externalData : (void*)other._data;
 
         auto r = !memcmp(thisData, otherData, getLength() * sizeof(StateSlot));
-        //LLMC_DEBUG_LOG() << "Compared " << *this << " to " << other << ": " << r << std::endl;
+//        LLMC_DEBUG_LOG() << "Compared " << *this << " to " << other << ": " << r << std::endl;
         return r;
     }
 
     size_t hash() const {
-        return _header ^ MurmurHash64(_misc & MASK_EXTERNALDATA ? _externalData : _data, getLength(), 0);
+        return _lengthAndType ^ MurmurHash64(_misc & MASK_EXTERNALDATA ? _externalData : _data, getLength(), 0);
     }
 
     friend std::ostream& operator<<(std::ostream& os, FullStateData<StateSlot> const& fsd) {
@@ -100,16 +105,27 @@ struct FullStateData {
         const StateSlot* s = fsd.getData();
         const StateSlot* end = s + fsd.getLength();
         for(; s < end; s++) {
-            os << s;
+            os << std::hex << " " << *s;
         }
         os << "]" << std::endl;
         return os;
     }
 
+    FullStateData const& operator=(FullStateData const& other) {
+        _header = other._header;
+        if(_misc & MASK_EXTERNALDATA) {
+            _misc &= ~MASK_EXTERNALDATA;
+            memcpy(_data, other._externalData, getLengthInBytes());
+        } else {
+            memcpy(_data, other._data, getLengthInBytes());
+        }
+        return *this;
+    }
+
 private:
     union {
         struct {
-            uint32_t _length; // in nr of StateSlots
+            uint32_t _lengthAndType; // in nr of StateSlots
             uint32_t _misc;
         };
         size_t _header;
@@ -157,6 +173,7 @@ public:
 
         friend std::ostream& operator<<(std::ostream& os, StateID64 const& state) {
             os << "(" << std::hex << state.getData() << ")";
+            return os;
         }
     protected:
         uint64_t _data;
@@ -197,6 +214,7 @@ public:
 
         friend std::ostream& operator<<(std::ostream& os, StateID32 const& state) {
             os << "(" << std::hex << state.getData() << ")";
+            return os;
         }
     protected:
         uint32_t _data;
@@ -221,6 +239,7 @@ public:
         }
         friend std::ostream& operator<<(std::ostream& os, InsertedState const& insertedState) {
             os << insertedState.getState() << (insertedState.isInserted() ? "+" : "");
+            return os;
         }
     private:
         StateID _stateID;
@@ -288,7 +307,122 @@ public:
 //    InsertedState insert(StateSlot* state, size_t length, bool isRoot);
 //    InsertedState insert(StateID const& stateID, Delta const& delta);
 //    FullState* get(StateID id);
+//    FullState* get(StateID id, size_t offset, StateSlot* data, size_t length);
 //    void printStats();
 };
 
+class Statistics {
+public:
+    size_t getElements() const {
+        return _elements;
+    }
+
+    void setElements(size_t elements) {
+        _elements = elements;
+    }
+
+    size_t getBytesInUse() const {
+        return _bytesInUse;
+    }
+
+    void setBytesInUse(size_t bytesInUse) {
+        _bytesInUse = bytesInUse;
+    }
+
+    size_t getBytesReserved() const {
+        return _bytesReserved;
+    }
+
+    void setBytesReserved(size_t bytesReserved) {
+        _bytesReserved = bytesReserved;
+    }
+
+    size_t getBytesMaximum() const {
+        return _bytesMaximum;
+    }
+
+    void setBytesMaximum(size_t bytesMaximum) {
+        _bytesMaximum = bytesMaximum;
+    }
+
+    Statistics& operator+=(Statistics const& other) {
+        _elements += other._elements;
+        _bytesInUse += other._bytesInUse;
+        _bytesReserved += other._bytesReserved;
+        _bytesMaximum += other._bytesMaximum;
+        return *this;
+    }
+
+public:
+    size_t _elements;
+    size_t _bytesInUse;
+    size_t _bytesReserved;
+    size_t _bytesMaximum;
+};
+
 } // namespace llmc::storage
+
+namespace std {
+
+template <typename StateSlot>
+struct hash<llmc::storage::FullStateData<StateSlot>*>
+{
+    std::size_t operator()(llmc::storage::FullStateData<StateSlot>* const& fsd) const {
+        return fsd->hash();
+    }
+};
+
+template <typename StateSlot>
+struct equal_to<llmc::storage::FullStateData<StateSlot>*> {
+    constexpr bool operator()( llmc::storage::FullStateData<StateSlot>* const& lhs, llmc::storage::FullStateData<StateSlot>* const& rhs ) const {
+        return lhs->equals(*rhs);
+    }
+};
+
+template <typename StateSlot>
+struct hash<llmc::storage::FullStateData<StateSlot>>
+{
+    std::size_t operator()(llmc::storage::FullStateData<StateSlot> const& fsd) const {
+        return fsd.hash();
+    }
+};
+
+template <typename StateSlot>
+struct equal_to<llmc::storage::FullStateData<StateSlot>> {
+    constexpr bool operator()( llmc::storage::FullStateData<StateSlot> const& lhs, llmc::storage::FullStateData<StateSlot> const& rhs ) const {
+        return lhs.equals(rhs);
+    }
+};
+
+template<>
+struct hash<llmc::storage::StorageInterface::StateID>
+{
+    std::size_t operator()(llmc::storage::StorageInterface::StateID const& s) const {
+        return std::hash<uint64_t>()(s.getData());
+    }
+};
+
+template<>
+struct equal_to<llmc::storage::StorageInterface::StateID> {
+    constexpr bool operator()( llmc::storage::StorageInterface::StateID const& lhs, llmc::storage::StorageInterface::StateID const& rhs ) const {
+        return lhs.getData() == rhs.getData();
+    }
+};
+
+//template <typename StateSlot>
+//ostream& operator<<(ostream& os, llmc::storage::FullStateData<StateSlot> const& fsd) {
+//    os << "[";
+//    os << fsd.getLength();
+//    os << ",";
+//    os << fsd.hash();
+//    os << ",";
+//    const StateSlot* s = fsd.getData();
+//    const StateSlot* end = s + fsd.getLength();
+//    for(; s < end; s++) {
+//        os << s;
+//    }
+//    os << "]" << std::endl;
+//    return os;
+//}
+
+}

@@ -114,6 +114,8 @@ public:
      */
     Value* generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len, Value*& newLength);
 
+    Value* generatePartialGet(Value* chunkid, Value* offset, Value* data, Value* len);
+
     /**
      * @brief Clone the chunk @c chunkid but with @c data of length @c len
      * appended to it.

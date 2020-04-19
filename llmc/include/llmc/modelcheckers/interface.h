@@ -19,7 +19,7 @@ public:
     }
     StateSlot* allocate(size_t slots) {
         auto current = _next;
-        _next += slots * sizeof(StateSlot) / sizeof(uint64_t);
+        _next += (slots+sizeof(uint64_t) / sizeof(StateSlot)-1) * sizeof(StateSlot) / sizeof(uint64_t);
         assert(_next <= _buffer.data() + _buffer.capacity());
         return (StateSlot*)current;
     }
@@ -141,13 +141,16 @@ public:
     using FullState = typename STORAGE::FullState;
     using InsertedState = typename STORAGE::InsertedState;
 
-    virtual InsertedState newState(StateTypeID const& typeID, size_t length, StateSlot* slots) = 0;
+    virtual InsertedState newState(VContext<STORAGE>* ctx, StateTypeID const& typeID, size_t length, StateSlot* slots) = 0;
     virtual StateID newTransition(VContext<STORAGE>* ctx, size_t length, StateSlot* slots, TransitionInfoUnExpanded const& transition) = 0;
     virtual StateID newTransition(VContext<STORAGE>* ctx, MultiDelta const& delta, TransitionInfoUnExpanded const& transition) = 0;
     virtual StateID newTransition(VContext<STORAGE>* ctx, Delta const& delta, TransitionInfoUnExpanded const& transition) = 0;
     virtual const FullState* getState(VContext<STORAGE>* ctx, StateID const& s) = 0;
-    virtual StateID newSubState(StateID const& stateID, Delta const& delta) = 0;
+    virtual StateID newSubState(VContext<STORAGE>* ctx, size_t length, StateSlot* slots) = 0;
+    virtual StateID newSubState(VContext<STORAGE>* ctx, StateID const& stateID, Delta const& delta) = 0;
     virtual const FullState* getSubState(VContext<STORAGE>* ctx, StateID const& s) = 0;
+    virtual bool getStatePartial(VContext<STORAGE>* ctx, StateID const& s, size_t offset, StateSlot* data, size_t length, bool isRoot = true) = 0;
+    virtual bool getSubStatePartial(VContext<STORAGE>* ctx, StateID const& s, size_t offset, StateSlot* data, size_t length) = 0;
     virtual Delta* newDelta(size_t offset, StateSlot* data, size_t len) = 0;
     virtual void deleteDelta(Delta* d) = 0;
     virtual bool newType(StateTypeID typeID, std::string const& name) = 0;

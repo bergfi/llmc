@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <ostream>
 
 namespace llmc { namespace statespace {
 

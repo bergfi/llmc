@@ -66,6 +66,7 @@ public:
 
         for(size_t i = 0; i < ltsType->edge_label.size(); ++i) {
             auto& label = ltsType->edge_label[i];
+            std::cout << "  - label: " << label.name << std::endl;
             if(label.name == "action") {
                 _labelIndex = i;
             }
@@ -73,10 +74,10 @@ public:
 
         auto svType = new llmc::statespace::StructType();
 
-        for(size_t i = 0; i < ltsType->edge_label.size(); ++i) {
-            auto& label = ltsType->edge_label[i];
-            svType->addField(label.name, new llmc::statespace::SingleType(label.name));
-        }
+//        for(size_t i = 0; i < ltsType->edge_label.size(); ++i) {
+//            auto& label = ltsType->edge_label[i];
+//            svType->addField(label.name, new llmc::statespace::SingleType(label.name));
+//        }
 
         _stateVectorType = svType;
     }
@@ -94,6 +95,9 @@ public:
     virtual int pins_chunk_put(void* ctx_, int type, chunk c) = 0;
     virtual chunk pins_chunk_get(void* ctx_, int type, int idx) = 0;
     virtual int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) = 0;
+    virtual uint64_t pins_chunk_put64(void* ctx_, int type, chunk c) = 0;
+    virtual chunk pins_chunk_get64(void* ctx_, int type, uint64_t idx) = 0;
+    virtual uint64_t pins_chunk_cam64(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) = 0;
 
     TransitionCB getCB_ReportTransition() {
         return _reportTransition_cb;
@@ -118,7 +122,7 @@ class PINSModel: public PINSModelBase, public VModel<llmc::storage::StorageInter
 public:
 
     static PINSModel* get(std::string const& filename) {
-        auto handle = dlopen(filename.c_str(), RTLD_LAZY);
+        auto handle = dlopen(filename.c_str(), RTLD_NOW);
         if(!handle) {
             printf("Failed to open %s: %s\n", filename.c_str(), dlerror());
             assert(0);
@@ -171,11 +175,21 @@ public:
         //const typename MODELCHECKER::FullState* state = ctx->getModelChecker()->getState(ctx, s);
         //_pins_getnextall();
         auto cb = (TransitionCB)reportTransitionCB;//getCB_ReportTransition();
+        auto fsd = ctx->getModelChecker()->getState(ctx, s);
         for(int tg = 0; tg < this->_tgroups; ++tg) {
 //            _pins_getnext((model_t)nullptr, tg, ((int*)nullptr), nullptr, (void *)nullptr);
-            auto fsd = ctx->getModelChecker()->getState(ctx, s);
             _pins_getnext((model_t)ctx, tg, ((int*)fsd->getData()), cb, (void *)ctx);
         }
+        return 0;
+    }
+
+    size_t getNext(StateID const& s, Context* ctx, size_t tg) override {
+
+        //const typename MODELCHECKER::FullState* state = ctx->getModelChecker()->getState(ctx, s);
+        //_pins_getnextall();
+        auto cb = (TransitionCB)reportTransitionCB;//getCB_ReportTransition();
+        auto fsd = ctx->getModelChecker()->getState(ctx, s);
+        _pins_getnext((model_t)ctx, tg, ((int*)fsd->getData()), cb, (void *)ctx);
         return 0;
     }
 
@@ -186,16 +200,110 @@ public:
 
     StateID getInitial(Context* ctx) override {
         assert(this->_init);
-        return ctx->getModelChecker()->newState(0, _length, _init).getState();
+        return ctx->getModelChecker()->newState(ctx, 0, _length, _init).getState();
     }
 
     static llmc::storage::StorageInterface::StateTypeID getTypeID(int type) {
         return type;
     }
 
+    virtual uint64_t pins_chunk_put64(void* ctx_, int type, chunk c) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        assert(c.len && "putting chunk with length 0");
+        assert((c.len & 3) == 0 && "putting unaligned chunk");
+        auto r = ctx->mc->newSubState(ctx, (size_t)(c.len / sizeof(llmc::storage::StorageInterface::StateSlot)), (llmc::storage::StorageInterface::StateSlot*)c.data);
+        assert(r.getData() && "0 is not a valid chunk ID");
+//        printf("pins_chunk_put64: %zx\n", r.getData());
+        return r.getData();
+    }
+
+    virtual chunk pins_chunk_get64(void* ctx_, int type, uint64_t idx) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        chunk c;
+
+        // TODO: this is deliberately getSubState because we do not care whether or not the chunk already exists
+        auto fsd = ctx->mc->getSubState(ctx, idx);
+        assert(fsd->getLength() && "returning chunk with length 0");
+        c.len = fsd->getLength() * sizeof(llmc::storage::StorageInterface::StateSlot);
+        c.data = (decltype(c.data))fsd->getData();
+        return c;
+    }
+
+    virtual void pins_chunk_getpartial64(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        if(offset_remainder == 0 && len_remainder == 0) {
+            ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), (StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot));
+//            printf("pins_chunk_getpartial64(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printArray((char*)data, len);
+//            printf("\n");
+        } else {
+            pins_chunk_getpartial64_unaligned(ctx_, type, idx, offset, data, len);
+//            printf("pins_chunk_getpartial64_unaligned(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printArray((char*)data, len);
+//            printf("\n");
+        }
+    }
+
+    virtual void pins_chunk_getpartial64_unaligned(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+        size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t nrSlots = (offset_remainder + len + (sizeof(llmc::storage::StorageInterface::StateSlot) - 1)) / (sizeof(llmc::storage::StorageInterface::StateSlot));
+        StateSlot tempSlots[nrSlots];
+        ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
+        memcpy(data, ((char*)tempSlots) + offset_remainder, len);
+    }
+
+    virtual uint64_t pins_chunk_cam64(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+
+        size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        if(offset_remainder == 0 && len_remainder == 0) {
+//            printf("pins_chunk_cam64(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printArray((char*)data, len);
+//            printf("\n");
+            auto d = ctx->mc->newDelta(offset / sizeof(llmc::storage::StorageInterface::StateSlot), (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot));
+            auto s = ctx->mc->newSubState(ctx, idx, *d);
+            ctx->mc->deleteDelta(d);
+            return s.getData();
+        } else {
+//            printf("pins_chunk_cam64_unaligned(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printArray((char*)data, len);
+//            printf("\n");
+            return pins_chunk_cam64_unaligned(ctx_, type, idx, offset, data, len);
+        }
+    }
+
+    void printArray(char* data, size_t len) {
+        char* dataEnd = data + len;
+        while(data < dataEnd) {
+            printf(" %x", *data);
+            data++;
+        }
+    }
+
+    virtual uint64_t pins_chunk_cam64_unaligned(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+
+        size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t nrSlots = (offset_remainder + len + (sizeof(llmc::storage::StorageInterface::StateSlot) - 1)) / (sizeof(llmc::storage::StorageInterface::StateSlot));
+        StateSlot tempSlots[nrSlots];
+        ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
+        memcpy(((char*)tempSlots) + offset_remainder, data, len);
+        auto d = ctx->mc->newDelta(offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
+        auto s = ctx->mc->newSubState(ctx, idx, *d);
+        ctx->mc->deleteDelta(d);
+        return s.getData();
+    }
+
     virtual int pins_chunk_put(void* ctx_, int type, chunk c) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-        auto r = ctx->mc->newState(getTypeID(type), (size_t)(c.len / sizeof(llmc::storage::StorageInterface::StateSlot)), (llmc::storage::StorageInterface::StateSlot*)c.data).getState().getData();
+        assert(c.len && "putting chunk with length 0");
+        auto r = ctx->mc->newSubState(ctx, (size_t)(c.len / sizeof(llmc::storage::StorageInterface::StateSlot)), (llmc::storage::StorageInterface::StateSlot*)c.data);
 //        printf("pins_chunk_put %u:", c.len);
 //        char* ch = c.data;
 //        char* end = c.data + c.len;
@@ -204,13 +312,15 @@ public:
 //            ch++;
 //        }
 //        printf("\n");
-        assert(r && "0 is not a valid chunk ID");
-        return r;
+        assert(r.getData() && "0 is not a valid chunk ID");
+        return r.getData();
     }
+
     virtual chunk pins_chunk_get(void* ctx_, int type, int idx) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         chunk c;
         auto fsd = ctx->mc->getState(ctx, idx);
+        assert(fsd->getLength() && "returning chunk with length 0");
         c.len = fsd->getLength() * sizeof(llmc::storage::StorageInterface::StateSlot);
         c.data = (decltype(c.data))fsd->getData();
 //        printf("pins_chunk_get %u:", c.len);
@@ -223,10 +333,11 @@ public:
 //        printf("\n");
         return c;
     }
+
     virtual int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         auto d = ctx->mc->newDelta(offset, (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot*));
-        auto s = ctx->mc->newSubState(idx, *d);
+        auto s = ctx->mc->newSubState(ctx, idx, *d);
         ctx->mc->deleteDelta(d);
         return s.getData();
     }
@@ -243,12 +354,17 @@ public:
 
     TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx, TransitionInfoUnExpanded const& tinfo_) const override {
         auto tinfo = tinfo_.get<transition_info*>();
-//        printf("Hello %p %p %x\n", tinfo, tinfo->labels, ctx->getModel<PINSModel>()->_labelIndex); fflush(stdout);
         if(tinfo && tinfo->labels) {
-            auto labelIndex = ctx->getModel<PINSModel>()->_labelIndex;
+            // TODO: There's some shortcuts here: labels are currently still in the PINS format, meaning 32bit.
+            // So as a shortcut, we assume the label chunkID to be in the first 2 32bit slots
+            // TODO: We also assume labels are substates, but that seems a correct assumption
+            auto labelIndex = 0;//ctx->getModel<PINSModel>()->_labelIndex;
             if(labelIndex < ctx->getModel<PINSModel>()->_ltsType->edge_label.size()) {
-                auto fsd = ctx->mc->getSubState(ctx, tinfo->labels[labelIndex]);
-                return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
+                auto fsd = ctx->mc->getSubState(ctx, *(uint64_t*)tinfo->labels);
+                if(fsd) {
+                    return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
+                } else {
+                }
             }
         }
         return TransitionInfo();

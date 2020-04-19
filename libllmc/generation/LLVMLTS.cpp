@@ -3,7 +3,12 @@
 
 namespace llmc {
 
-SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, LLPinsGenerator* gen)
+LLPinsGenerator* SVTree::gen() {
+    return manager()->gen();
+}
+
+
+SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, SVTypeManager* manager)
 : _name(std::move(name))
 , _ltsminType(std::move(ltsminType))
 , _llvmType(llvmType)
@@ -11,7 +16,7 @@ SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, LLPin
 
     // Determine if the LLVM Type fits perfectly in a number of state
     // vector slots.
-    auto& DL = gen->pinsModule->getDataLayout();
+    auto& DL = manager->gen()->pinsModule->getDataLayout();
     assert(_llvmType->isSized() && "type is not sized");
     auto bytesNeeded = DL.getTypeSizeInBits(_llvmType) / 8;
     assert(bytesNeeded > 0 && "size is 0");
@@ -27,14 +32,18 @@ SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, LLPin
     }
 }
 
-SVStructType::SVStructType(std::string name, LLPinsGenerator* gen, std::vector<SVTree*> children): SVType(name, gen) {
+SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector<SVTree*> children): SVType(name, manager) {
     std::vector<Type*> types;
     for(auto& c: children) {
         types.push_back(c->getLLVMType());
     }
 
     // Should padded be the same one?
-    _PaddedLLVMType = _llvmType = StructType::create(gen->ctx, types, name);
+    // TODO: currently, we require packed because we flatten the SV such that LTSmin can cope with it
+    // In the future we can send the SV type as tree and tell them where in the flattened version the data is,
+    // such that much more information is available even when the SV is dynamically extended
+    auto structType = StructType::create(manager->gen()->ctx, types, name, false);
+    _PaddedLLVMType = _llvmType = structType;
 }
 
 Value* SVTree::getValue(Value* rootValue) {
@@ -59,6 +68,8 @@ Value* SVTree::getValue(Value* rootValue) {
     // Create the GEP
     auto v = gen()->builder.CreateGEP(rootValue, ArrayRef<Value*>(indices));
 
+    assert(v);
+
     // If the real LLVM Type is different from the LLVM Type in the SV,
     // perform a pointer cast, so that the generated code actually uses
     // the real LLVM Type it expects instead of the LLVM Type in the SV.
@@ -67,7 +78,7 @@ Value* SVTree::getValue(Value* rootValue) {
     if(type && type->getLLVMType() != type->getRealLLVMType()) {
         v = gen()->builder.CreatePointerCast(v, PointerType::get(type->getRealLLVMType(), 0), name);
     } else {
-        v->setName(name);
+//        v->setName(name);
     }
     return v;
 }

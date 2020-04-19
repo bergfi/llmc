@@ -1,6 +1,13 @@
 #pragma once
 
+#include <deque>
+#include <shared_mutex>
+#include <thread>
 #include <llmc/statespace/listener.h>
+#include <libfrugi/System.h>
+#include <libfrugi/Settings.h>
+
+using namespace libfrugi;
 
 template<typename Model, typename STORAGE, template<typename,typename> typename LISTENER=llmc::statespace::VoidPrinter>
 class MultiCoreModelCheckerSimple: public VModelChecker<llmc::storage::StorageInterface> {
@@ -25,11 +32,11 @@ public:
         Context(VModelChecker<llmc::storage::StorageInterface>* mc, VModel<llmc::storage::StorageInterface>* model): VContext<llmc::storage::StorageInterface>(mc, model) {}
     };
 
-    MultiCoreModelCheckerSimple(Model* m):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0) {
+    MultiCoreModelCheckerSimple(Model* m):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0) {
         _rootTypeID = 0;
     }
 
-    MultiCoreModelCheckerSimple(Model* m, Listener& listener):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _listener(listener) {
+    MultiCoreModelCheckerSimple(Model* m, Listener& listener):  VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _listener(listener) {
         _rootTypeID = 0;
     }
 
@@ -49,7 +56,7 @@ public:
 
         // vector container stores threads
         std::vector<std::thread> workers;
-        for (int i = 0; i < 4; i++) {
+        for (size_t i = 0; i < _threads; i++) {
             workers.push_back(std::thread([this]()
                                           {
                                               Context ctx(this, this->_m);
@@ -62,7 +69,7 @@ public:
                                                       this->_m->getNextAll(ctx.sourceState, &ctx);
                                                       current = StateID::NotFound();
                                                   } while(current.exists());
-                                                  size_t statesLocal = _states;
+//                                                  size_t statesLocal = _states;
 //                                                  if(statesLocal >= 100000) {
 //                                                      printf("aborting after %zu states\n", statesLocal);
 //                                                      fflush(stdout);
@@ -72,8 +79,8 @@ public:
                                           }
             ));
         }
-        for (int i = 0; i < 4; i++) {
-            workers[i].join();
+        for(auto& worker: workers) {
+            worker.join();
         }
         auto elapsed = timer.getElapsedSeconds();
         printf("Stopped after %.2lfs\n", elapsed); fflush(stdout);
@@ -92,23 +99,27 @@ public:
         return result;
     }
 
-    llmc::storage::StorageInterface::InsertedState newState(StateTypeID const& typeID, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
-        auto r = _storage.insert(slots, length, typeID == _rootTypeID); // could make it 0?
+    llmc::storage::StorageInterface::InsertedState newState(VContext<llmc::storage::StorageInterface>* ctx_, StateTypeID const& typeID, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
+        auto insertedState = _storage.insert(slots, length, typeID == _rootTypeID); // could make it 0?
 
         // Need to up state count, but newState is currently used for chunks as well
+        if(insertedState.isInserted()) {
+//            _listener.writeState(this->getModel(), insertedState.getState(), length, slots);
+        }
 
-        return r;
+        return insertedState;
     }
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots, TransitionInfoUnExpanded const& tinfo) override {
-        auto ctx = static_cast<Context*>(ctx_);
-        StateID const& stateID = ctx->sourceState;
+//        auto ctx = static_cast<Context*>(ctx_);
+//        StateID const& stateID = ctx->sourceState;
 
         // the type ID could be extracted from stateID...
-        auto insertedState = newState(_rootTypeID, length, slots);
+        auto insertedState = newState(ctx_, _rootTypeID, length, slots);
         updatable_lock lock(mtx);
         if(insertedState.isInserted()) {
             _states++;
+//            _listener.writeState(this->getModel(), insertedState.getState(), length, slots);
             stateQueueNew.push_back(insertedState.getState());
         }
         _transitions++;
@@ -116,9 +127,9 @@ public:
     }
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::MultiDelta const& delta, TransitionInfoUnExpanded const& tinfo) override {
-        auto ctx = static_cast<Context*>(ctx_);
-        StateID const& stateID = ctx->sourceState;
-        _transitions++;
+//        auto ctx = static_cast<Context*>(ctx_);
+//        StateID const& stateID = ctx->sourceState;
+//        _transitions++;
         abort();
         return 0;
     }
@@ -131,7 +142,10 @@ public:
         if(insertedState.isInserted()) {
             _states++;
             stateQueueNew.push_back(insertedState.getState());
+//            auto fsd = getState(ctx_, insertedState.getState());
+//            _listener.writeState(this->getModel(), insertedState.getState(), fsd->getLength(), fsd->getData());
         }
+//        _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
         _transitions++;
         return insertedState.getState();
     }
@@ -139,6 +153,7 @@ public:
     llmc::storage::StorageInterface::FullState* getState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
         auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {
+            (void)ctx;
             return _storage.get(s, true);
         } else {
             size_t stateLength = _storage.determineLength(s);
@@ -149,7 +164,12 @@ public:
         }
     }
 
-    llmc::storage::StorageInterface::StateID newSubState(llmc::storage::StorageInterface::StateID const& stateID, Delta const& delta) override {
+    llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
+        auto insertedState = _storage.insert(slots, length, false);
+        assert(insertedState.getState().getData());
+        return insertedState.getState();
+    }
+    llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, Delta const& delta) override {
         auto insertedState = _storage.insert(stateID, delta, false);
         return insertedState.getState();
     }
@@ -157,6 +177,7 @@ public:
     const llmc::storage::StorageInterface::FullState* getSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
         auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {
+            (void)ctx;
             return _storage.get(s, false);
         } else {
             size_t stateLength = _storage.determineLength(s);
@@ -167,7 +188,17 @@ public:
         }
     }
 
-//    bool getState(StateSlot* dest, StateID const& s) {
+    virtual bool getStatePartial(VContext<llmc::storage::StorageInterface>* ctx_, StateID const& s, size_t offset, StateSlot* data, size_t length, bool isRoot = true) {
+        (void)ctx_;
+        return _storage.getPartial(s, offset, data, length, isRoot);
+    }
+
+    virtual bool getSubStatePartial(VContext<llmc::storage::StorageInterface>* ctx_, StateID const& s, size_t offset, StateSlot* data, size_t length) {
+        (void)ctx_;
+        return _storage.getPartial(s, offset, data, length, false);
+    }
+
+    //    bool getState(StateSlot* dest, StateID const& s) {
 //        return _storage.get(dest, s, true);
 //    }
 
@@ -194,6 +225,21 @@ public:
 
     Storage& getStorage() { return _storage; }
 
+    size_t getStates() const {
+        return _states;
+    }
+
+    size_t getTransitions() const {
+        return _transitions;
+    }
+
+    void setSettings(Settings& settings) {
+        _threads = settings["threads"];
+        if(_threads == 0) {
+            _threads = System::getNumberOfAvailableCores();
+        }
+    }
+
 protected:
     mutex_type mtx;
     std::deque<StateID> stateQueueNew;
@@ -202,4 +248,5 @@ protected:
     StateTypeID _rootTypeID;
     Storage _storage;
     Listener& _listener;
+    size_t _threads;
 };

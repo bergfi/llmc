@@ -1,6 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <ostream>
+#include <shared_mutex>
+#include <libfrugi/Settings.h>
+
+using namespace libfrugi;
+
 #include <llmc/models/PINSModel.h>
 
 namespace llmc {
@@ -48,48 +54,71 @@ template<typename ModelChecker, typename Model>
 class DotPrinter {
 public:
     using Context = typename ModelChecker::Context;
+    using mutex_type = std::mutex;
+    using updatable_lock = std::unique_lock<mutex_type>;
 public:
 
     using TransitionInfo = typename Model::TransitionInfo;
     using StateID = typename ModelChecker::StateID;
+    using FullState = typename ModelChecker::FullState;
     using StateSlot = typename ModelChecker::StateSlot;
 
-    DotPrinter(std::ostream& out): out(out) {
+    DotPrinter(): out(std::cerr), _writeState(false) {
+
+    }
+    DotPrinter(std::ostream& out): out(out), _writeState(false) {
 
     }
 
     void init() {
+        updatable_lock lock(mtx);
         out << "digraph somegraph {" << std::endl;
     }
 
     void finish() {
+        updatable_lock lock(mtx);
         out << "}" << std::endl;
     }
 
-    void writeState(Model* model, StateID const& stateID, size_t length, const StateSlot* slots) {
+    void writeState(Model* model, StateID const& stateID, const FullState* fsd) {
+        if(!_writeSubState && fsd && !fsd->isRoot()) {
+            return;
+        }
+        updatable_lock lock(mtx);
         out << "\ts" << stateID.getData();
 
-//        out << " [shape=record, label=\"{" << stateID.getData();
-//        out << "|{{state|{";
-//        writeVector(out, model, length, slots);
-//        out << "}}}";
-//        out << "}\"]";
+        out << " [shape=record, label=\"{" << (stateID.getData() & 0xFFFFFFFFFFULL) << " (" << (stateID.getData() >> 40) << ")";
+        out << "|{{state|{";
+        if(_writeState && fsd) writeVector(out, model, fsd->getLength(), fsd->getData());
+        out << "}}}";
+        out << "}\"]";
 
         out << ";" << std::endl;
     }
 
-    void writeTransition(StateID const& from, StateID const& to, TransitionInfo const& tInfo) {
+    void writeTransition(StateID const& from, StateID const& to, TransitionInfo tInfo) {
+        updatable_lock lock(mtx);
         TransitionInfo const& t = tInfo;
+
+        size_t start_pos = 0;
+        std::string escape = "\"";
+        std::string escaped = "\\\"";
+        std::string str = tInfo.label;
+        while((start_pos = str.find(escape, start_pos)) != std::string::npos) {
+            str.replace(start_pos, escape.length(), escaped);
+            start_pos += escaped.length();
+        }
+
         out << "\ts" << from.getData() << " -> s" << to.getData();
-        if(t.label.length() > 0) {
-            out << " [label=\"" << t.label << "\"]";
+        if(str.length() > 0) {
+            out << " [label=\"" << str << "\"]";
         } else {
             out << " []";
         }
         out << ";" << std::endl;
     }
 
-    void writeVector(ostream& out, Model* model, size_t length, const StateSlot* slots) {
+    void writeVector(std::ostream& out, Model* model, size_t length, const StateSlot* slots) {
         for(size_t i = 0; i < length; ++i) {
             if(i > 0) {
                 out << "|";
@@ -105,8 +134,63 @@ public:
 //        }
     }
 
+    void setSettings(Settings& settings) {
+        _writeState = settings["listener.writestate"].isOn();
+        _writeSubState = settings["listener.writesubstate"].isOn();
+    }
+
 private:
     std::ostream& out;
+    mutex_type mtx;
+    bool _writeState;
+    bool _writeSubState;
+};
+
+template<typename ModelChecker, typename Model>
+class StatsGatherer {
+public:
+    using Context = typename ModelChecker::Context;
+public:
+
+    using TransitionInfo = typename Model::TransitionInfo;
+    using StateID = typename ModelChecker::StateID;
+    using StateSlot = typename ModelChecker::StateSlot;
+    using FullState = typename ModelChecker::FullState;
+
+    StatsGatherer(): _states(0), _transitions(0) {
+    }
+
+    void init() {
+    }
+
+    void finish() {
+    }
+
+    void writeState(Model* model, StateID const& stateID, const FullState* fsd) {
+        ++_states;
+    }
+
+    void writeTransition(StateID const& from, StateID const& to, TransitionInfo const& tInfo) {
+        ++_transitions;
+    }
+
+    void writeVector(std::ostream& out, Model* model, size_t length, const StateSlot* slots) {
+    }
+
+    size_t getStates() const {
+        return _states;
+    }
+
+    size_t getTransitions() const {
+        return _transitions;
+    }
+
+    void setSettings(Settings& settings) {
+    }
+
+private:
+    std::atomic<size_t> _states;
+    std::atomic<size_t> _transitions;
 };
 
 } // namespace statespace

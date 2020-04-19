@@ -14,9 +14,11 @@
 #include <llmc/statespace/listener.h>
 #include <llmc/storage/interface.h>
 #include <llmc/storage/dtree.h>
+#include <llmc/storage/dtree2.h>
 #include <llmc/storage/stdmap.h>
 #include <llmc/storage/cchm.h>
 #include <llmc/storage/treedbs.h>
+#include <llmc/storage/treedbsmod.h>
 #include <sstream>
 #include <llmc/murmurhash.h>
 
@@ -139,7 +141,7 @@ struct HashCompareMurmur {
 
     __attribute__((always_inline))
     size_t hash( const T& k ) const {
-        return MurmurHash64(&k, 8, seedForZero);
+        return MurmurHash64(&k, sizeof(T), seedForZero);
     }
 };
 
@@ -177,11 +179,13 @@ void goPINS(std::string soFile) {
 //                                > printer(f);
 //    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
 
-    if constexpr(Storage::stateHasFixedLength()) {
-        if(settings["storage.fixedvectorsize"].asUnsignedValue() > 0) {
-            mc.getStorage().setMaxStateLength(settings["storage.fixedvectorsize"].asUnsignedValue());
-        }
-    }
+//    if constexpr(Storage::stateHasFixedLength()) {
+//        if(settings["storage.fixedvectorsize"].asUnsignedValue() > 0) {
+//            mc.getStorage().setMaxStateLength(settings["storage.fixedvectorsize"].asUnsignedValue());
+//        }
+//    }
+    mc.setSettings(settings);
+    mc.getStorage().setSettings(settings);
 
     mc.go();
     f.close();
@@ -195,10 +199,16 @@ void goSelectStorage(std::string fileName) {
         goPINS<llmc::storage::StdMap, ModelChecker>(fileName);
     } else if(settings["storage"].asString() == "cchm") {
         goPINS<llmc::storage::cchm, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "treedbs") {
-        goPINS<llmc::storage::TreeDBSStorage, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "treedbs_stdmap") {
+        goPINS<llmc::storage::TreeDBSStorage<llmc::storage::StdMap>, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "treedbs_cchm") {
+        goPINS<llmc::storage::TreeDBSStorage<llmc::storage::cchm>, ModelChecker>(fileName);
+    } else if(settings["storage"].asString() == "treedbsmod") {
+        goPINS<llmc::storage::TreeDBSStorageModified, ModelChecker>(fileName);
     } else if(settings["storage"].asString() == "dtree") {
-        goPINS<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+        goPINS<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>, HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+//    } else if(settings["storage"].asString() == "dtree2") {
+//        goPINS<llmc::storage::DTree2Storage<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>,SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
     } else {
     }
 }
@@ -321,8 +331,13 @@ int main(int argc, char* argv[]) {
         out.reportError("Pinsifying failed");
         exit(1);
     }
+    if(out.getErrors()) {
+        out.reportErrors();
+        exit(1);
+    }
 
     // .pins.ll -> .o
+    FileSystem::remove(output_o);
     if(compile(bin_llc, output_ll, output_o, out)) {
         out.reportError("Compilation failed");
         exit(1);

@@ -34,7 +34,7 @@ public:
 
     StateID getInitial(Context* ctx) override {
         StateSlot d[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-        return ctx->getModelChecker()->newState(0, sizeof(d)/sizeof(*d), d).getState();
+        return ctx->getModelChecker()->newState(ctx, 0, sizeof(d)/sizeof(*d), d).getState();
     }
 
     llmc::statespace::Type* getStateVectorType() override {

@@ -1,65 +1,80 @@
 #pragma once
 
+#include <cstring>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include "interface.h"
+#include <libfrugi/Settings.h>
+#include <allocator.h>
 
-namespace std {
-
-template <typename StateSlot>
-struct hash<llmc::storage::FullStateData<StateSlot>*>
-{
-std::size_t operator()(llmc::storage::FullStateData<StateSlot>* const& fsd) const {
-    return fsd->hash();
-}
-};
-
-template <typename StateSlot>
-struct equal_to<llmc::storage::FullStateData<StateSlot>*> {
-constexpr bool operator()( llmc::storage::FullStateData<StateSlot>* const& lhs, llmc::storage::FullStateData<StateSlot>* const& rhs ) const {
-    return lhs->equals(*rhs);
-}
-};
-
-template<>
-struct hash<llmc::storage::StorageInterface::StateID>
-{
-    std::size_t operator()(llmc::storage::StorageInterface::StateID const& s) const {
-        return std::hash<uint64_t>()(s.getData());
-    }
-};
-
-template<>
-struct equal_to<llmc::storage::StorageInterface::StateID> {
-    constexpr bool operator()( llmc::storage::StorageInterface::StateID const& lhs, llmc::storage::StorageInterface::StateID const& rhs ) const {
-        return lhs.getData() == rhs.getData();
-    }
-};
-
-//template <typename StateSlot>
-//ostream& operator<<(ostream& os, llmc::storage::FullStateData<StateSlot> const& fsd) {
-//    os << "[";
-//    os << fsd.getLength();
-//    os << ",";
-//    os << fsd.hash();
-//    os << ",";
-//    const StateSlot* s = fsd.getData();
-//    const StateSlot* end = s + fsd.getLength();
-//    for(; s < end; s++) {
-//        os << s;
-//    }
-//    os << "]" << std::endl;
-//    return os;
-//}
-
-}
+using namespace libfrugi;
 
 namespace llmc::storage {
 
-class StdMap: public StorageInterface {
+template<typename T>
+class countingallocator: std::allocator<T> {
 public:
 
-    StdMap(): _nextID(1), _store(), _storeID() {
+    typedef T value_type;
+    typedef value_type* pointer;
+    typedef const value_type* const_pointer;
+    typedef value_type& reference;
+    typedef const value_type& const_reference;
+    typedef size_t size_type;
+    typedef ptrdiff_t difference_type;
+    template<class U> struct rebind {
+        typedef countingallocator<U> other;
+    };
+
+    countingallocator(): bytesUsed(0) {
+    }
+
+    countingallocator(const countingallocator<T>& other) throw(): bytesUsed(0) {
+    }
+
+    template<typename U> countingallocator(const countingallocator<U>& other) throw() {
+        bytesUsed = other.size();
+    }
+
+    template<typename U> countingallocator(countingallocator<U>&& other) throw() {
+        bytesUsed = other.size();
+    }
+
+    void operator=(const countingallocator<T>& other) {
+        bytesUsed = other.size();
+    }
+
+    void operator=(countingallocator<T>&& other) {
+        bytesUsed = other.size();
+    }
+
+    void deallocate(pointer p, size_type n) {
+        bytesUsed -= n * sizeof(T);
+        return std::allocator<T>::deallocate(p, n);
+    }
+
+    pointer allocate(size_type n, const void* hint =0 ) {
+        bytesUsed += n * sizeof(T);
+        return std::allocator<T>::allocate(n, hint);
+    }
+
+    size_t size() const {
+        return bytesUsed;
+    }
+
+private:
+    size_t bytesUsed;
+};
+
+class StdMap: public StorageInterface {
+public:
+    using mutex_type = std::shared_timed_mutex;
+    using read_only_lock  = std::shared_lock<mutex_type>;
+    using updatable_lock = std::unique_lock<mutex_type>;
+public:
+
+    StdMap(): _nextID(1),_hashmapScale(24), _store(), _storeID() {
 
     }
 
@@ -70,8 +85,8 @@ public:
     }
 
     void init() {
-        _store.reserve(1U << 24);
-        _storeID.reserve(1U << 24);
+        _store.reserve(1U << _hashmapScale);
+        _storeID.reserve(1U << _hashmapScale);
     }
 
     using StateSlot = StorageInterface::StateSlot;
@@ -81,16 +96,25 @@ public:
     using MultiDelta = StorageInterface::MultiDelta;
 
     StateID find(FullState* state) {
+        read_only_lock lock(mtx);
         auto it = _store.find(state);
+//        printf("finding state");
+//        auto b = state->getData();
+//        auto e = state->getData() + state->getLength();
+//        while(b < e) {
+//            printf(" %x", *b);
+//            b++;
+//        }
+//        printf(" -> %u\n", it != _store.end());
         if(it == _store.end()) {
             return StateID::NotFound();
         }
         return it->second;
     }
     StateID find(StateSlot* state, size_t length, bool isRoot) {
-        auto fsd = FullStateData<StateSlot>::create(isRoot, length, state);
+        auto fsd = FullStateData<StateSlot>::createExternal(isRoot, length, state);
         auto r = find(fsd);
-        FullStateData<StateSlot>::destroy(fsd);
+        fsd->destroy();
         return r;
     }
 //    InsertedState insertOverwrite(FullState* state) {
@@ -102,18 +126,27 @@ public:
 //        return insert(FullStateData<StateSlot>::create(isRoot, length, state));
 //    }
     InsertedState insert(FullState* state) {
-        auto id = _nextID;
+        updatable_lock lock(mtx);
+        auto id = _nextID | (state->getLength() << 40);
         auto r = _store.insert({state, id});
         if(r.second) {
             ++_nextID;
             _storeID[id] = state;
+//            printf("inserted state");
+//            auto b = state->getData();
+//            auto e = state->getData() + state->getLength();
+//            while(b < e) {
+//                printf(" %x", *b);
+//                b++;
+//            }
+//            printf("\n");
             //LLMC_DEBUG_LOG() << "Inserted state " << state << " -> " << id << std::endl;
         } else {
             //LLMC_DEBUG_LOG() << "Inserted state " << state << " -> " << r.first->second << "(already inserted)" << std::endl;
         }
         return InsertedState(r.first->second, r.second);
     }
-    InsertedState insert(StateSlot* state, size_t length, bool isRoot) {
+    InsertedState insert(const StateSlot* state, size_t length, bool isRoot) {
         return insert(FullStateData<StateSlot>::create(isRoot, length, state));
     }
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
@@ -127,18 +160,48 @@ public:
 
         memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
         memcpy(buffer+delta.getOffset(), delta.getData(), delta.getLength() * sizeof(StateSlot));
+        if(delta.getOffset() > old->getLength()) {
+            memset(buffer+old->getLength(), 0, (delta.getOffset() - old->getLength()) * sizeof(StateSlot));
+        }
 
         return insert(buffer, newLength, isRoot);
 
     }
 
     FullState* get(StateID id, bool isRoot) {
+        read_only_lock lock(mtx);
         auto it = _storeID.find(id);
         if(it == _storeID.end()) {
+            printf("Cannot find %zx\n", id.getData()); fflush(stdout);
             abort();
             return nullptr;
         }
         return it->second;
+    }
+
+    bool get(StateSlot* dest, StateID stateID, bool isRoot) {
+        FullState* s = get(stateID, isRoot);
+        if(s) {
+            memcpy(dest, s->getData(), s->getLengthInBytes());
+        }
+        return s != nullptr;
+    }
+
+    bool getPartial(StateID id, size_t offset, StateSlot* data, size_t length, bool isRoot) {
+        FullState* s = get(id, isRoot);
+        if(s) {
+            memcpy(data, &s->getData()[offset], length * sizeof(StateSlot));
+        }
+        return s != nullptr;
+//        read_only_lock lock(mtx);
+//        auto it = _storeID.find(id);
+//        if(it == _storeID.end()) {
+//            return false;
+//        }
+//
+//        memcpy(data, &it->second->getData()[offset], length * sizeof(StateSlot));
+//
+//        return true;
     }
 
     void printStats() {
@@ -153,11 +216,11 @@ public:
     }
 
     static bool constexpr stateHasLengthInfo() {
-        return false;
+        return true;
     }
 
     size_t determineLength(StateID const& s) const {
-        return 0;
+        return s.getData() >> 40;
     }
 
     static bool constexpr needsThreadInit() {
@@ -168,10 +231,49 @@ public:
         return 1ULL << 32;
     }
 
+    void setSettings(Settings& settings) {
+        size_t hashmapScale = settings["storage.stdmap.hashmap_scale"].asUnsignedValue();
+        hashmapScale = hashmapScale ? hashmapScale : settings["storage.hashmap_scale"].asUnsignedValue();
+        if(hashmapScale) {
+            _hashmapScale = hashmapScale;
+        }
+    }
+
+    Statistics getStatistics() {
+        Statistics stats;
+        stats._bytesReserved = 0;
+        stats._bytesInUse = 0;
+        stats._bytesMaximum = 0;
+        stats._elements = _store.size();
+
+        for(auto& pair: _store) {
+            stats._bytesInUse += pair.first->getLengthInBytes();
+            stats._bytesReserved += pair.first->getLengthInBytes();
+        }
+
+        // Buckets
+        stats._bytesInUse += stats._elements * sizeof(uint64_t*);
+        stats._bytesReserved += _store.bucket_count() * sizeof(uint64_t*);
+
+        // Entry pairs
+        stats._bytesInUse += _store.get_allocator().size();
+        stats._bytesReserved += _store.get_allocator().size();
+
+        // rough estimate...
+        return stats;
+
+    }
+
+    std::string getName() const {
+        return "stdmap";
+    }
+
 private:
+    mutex_type mtx;
     size_t _nextID;
-    ::std::unordered_map<FullState*, StateID> _store;
-    ::std::unordered_map<StateID, FullState*> _storeID;
+    size_t _hashmapScale;
+    ::std::unordered_map<FullState*, StateID, std::hash<FullState*>, std::equal_to<FullState*>, countingallocator<std::pair<const FullState*, StateID>>> _store;
+    ::std::unordered_map<StateID, FullState*, std::hash<StateID>, std::equal_to<StateID>, countingallocator<std::pair<StateID, const FullState*>>> _storeID;
 };
 
 } // namespace llmc::storage

@@ -1,7 +1,12 @@
+#pragma once
+
 #include <iostream>
 
 #include "interface.h"
 #include "../../../../dtree/dtree/include/dtree/dtree.h"
+#include <libfrugi/Settings.h>
+
+using namespace libfrugi;
 
 namespace llmc::storage {
 
@@ -38,8 +43,18 @@ template<typename HASHSET>
 class DTreeStorage : public StorageInterface {
 public:
 
-    DTreeStorage() : _store(24) {
-
+    DTreeStorage() : _store() {
+        _store.setHandlerFull([this](uint64_t v, bool isRoot) {
+            static std::atomic<bool> done = false;
+            bool f = false;
+            bool t = true;
+            if(done.compare_exchange_strong(f, t)) {
+                std::cerr << "FATAL ERROR: storage full when trying to insert " << v << "(" << isRoot << ")"
+                          << std::endl;
+                printStats();
+                abort();
+            }
+        });
     }
 
     ~DTreeStorage() {
@@ -111,14 +126,14 @@ public:
     }
 
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
-        auto idx = _store.delta(DTreeIndex(stateID.getData()), delta.getOffset(), delta.getData(), delta.getLength(),
+        auto idx = _store.deltaMayExtend(DTreeIndex(stateID.getData()), delta.getOffset(), delta.getData(), delta.getLength(),
                                 isRoot);
         return InsertedState(idx.getState().getData(), idx.isInserted());
     }
 
     FullState* get(StateID id, bool isRoot) {
         DTreeIndex treeID(id.getData());
-        FullState* dest = FullState::create(true, treeID.getLength());
+        FullState* dest = FullState::create(isRoot, determineLength(id));
         get(dest->getDataToModify(), id, isRoot);
         return dest;
     }
@@ -127,30 +142,57 @@ public:
         return _store.get(id.getData(), (uint32_t*) dest, isRoot);
     }
 
+    bool getPartial(StateID id, size_t offset, StateSlot* data, size_t length, bool isRoot) {
+        return _store.getPartial(id.getData(), offset, length, data, isRoot);
+    }
+
     void printStats() {
+
         std::cout << "inserts (new):      " << _store.getProbeStats().insertsNew << std::endl;
         std::cout << "inserts (existing): " << _store.getProbeStats().insertsExisting << std::endl;
         std::cout << "finds:              " << _store.getProbeStats().finds << std::endl;
-        std::cout << "probeCount:         " << _store.getProbeStats().probeCount
-                  << " (" << (_store.getProbeStats().probeCount /
-                              (_store.getProbeStats().insertsNew + _store.getProbeStats().insertsExisting +
-                               _store.getProbeStats().finds))
-                  << " per insert/find)" << std::endl;
+        std::cout << "probeCount:         " << _store.getProbeStats().probeCount;
+        if((_store.getProbeStats().insertsNew + _store.getProbeStats().insertsExisting + _store.getProbeStats().finds) > 0) {
+            std::cout << " (" << ((double)_store.getProbeStats().probeCount /
+                        (_store.getProbeStats().insertsNew + _store.getProbeStats().insertsExisting +
+                         _store.getProbeStats().finds))
+                      << " per insert/find)" << std::endl;
+        } else {
+            std::cout << std::endl;
+        }
         std::cout << "firstProbe:         " << _store.getProbeStats().firstProbe << std::endl;
         std::cout << "finalProbe:         " << _store.getProbeStats().finalProbe << std::endl;
         std::cout << "failedCAS:          " << _store.getProbeStats().failedCAS << std::endl;
-        std::cout << "max size:           " << (1 << _store.getScale()) << std::endl;
+
+        // Root map
         std::vector<size_t> density;
         density.reserve(128);
-        _store.getDensityStats(128, density, 0);
+        auto mapRootStats = _store.getDensityStats(128, density, 0);
         std::cout << "root map:   " << std::endl;
         printGraph(std::cout, density, "\033[1;37;44m");
-        std::cout << std::endl;
+
+        std::cout << ", fill=" << ((double)100 * mapRootStats.bytesUsed / mapRootStats.bytesReserved) << "%" << std::endl;
+        std::cout << "root hash map size in bytes: " << mapRootStats.bytesUsed << " / " << mapRootStats.bytesReserved << std::endl;
+
+        // Data map
         density.clear();
-        _store.getDensityStats(128, density, 1);
-        std::cout << "common map: " << std::endl;
+        density.reserve(128);
+        auto mapDataStats = _store.getDensityStats(128, density, 1);
+        std::cout << "data map: " << std::endl;
         printGraph(std::cout, density, "\033[1;37;44m");
-        std::cout << std::endl;
+
+        std::cout << ", fill=" << ((double)100 * mapDataStats.bytesUsed / mapDataStats.bytesReserved) << "%" << std::endl;
+        std::cout << "data hash map size in bytes: " << mapDataStats.bytesUsed << " / " << mapDataStats.bytesReserved << std::endl;
+    }
+
+    Statistics getStatistics() {
+        Statistics stats;
+        auto mapStats = _store.getStats();
+        stats._bytesReserved = mapStats.bytesReserved;
+        stats._bytesInUse = mapStats.bytesUsed;
+        stats._bytesMaximum = mapStats.bytesReserved;
+        stats._elements = mapStats.elements;
+        return stats;
     }
 
     static bool constexpr accessToStates() {
@@ -162,7 +204,7 @@ public:
     }
 
     static bool constexpr stateHasLengthInfo() {
-        return true;
+        return false;
     }
 
     static bool constexpr needsThreadInit() {
@@ -170,11 +212,45 @@ public:
     }
 
     size_t determineLength(StateID const& s) const {
-        return ((typename dtree<HASHSET>::Index*) &s)->getLength();;
+        size_t length;
+        _store.getLength(s.getData(), length);
+        return length;
     }
 
     size_t getMaxStateLength() const {
         return 1ULL << 24;
+    }
+
+    void setSettings(Settings& settings) {
+        size_t hashmapRootScale = settings["storage.dtree.hashmaproot_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.dtree.hashmap_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.hashmaproot_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.hashmap_scale"].asUnsignedValue();
+        if(hashmapRootScale) {
+            _store.setRootScale(hashmapRootScale);
+        }
+
+        size_t hashmapDataScale = settings["storage.dtree.hashmapdata_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.dtree.hashmap_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.hashmapdata_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.hashmap_scale"].asUnsignedValue();
+        if(hashmapDataScale) {
+            _store.setDataScale(hashmapDataScale);
+        }
+    }
+
+    friend std::ostream& operator<<(std::ostream& out, DTreeStorage& tree) {
+        out << "DTreeStorage["
+            << "scale=" << tree._store.getScale()
+            << "]"
+            ;
+        return out;
+    }
+
+    std::string getName() const {
+        std::stringstream ss;
+        ss << "dtree(" << _store.getRootScale() << "," << _store.getDataScale() << ")";
+        return ss.str();
     }
 
 private:

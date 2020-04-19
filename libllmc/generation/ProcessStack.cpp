@@ -5,7 +5,7 @@ namespace llmc {
 
 void ProcessStack::init() {
     // previous pc, register frame, register index where to store result, previous chunkID
-    t_frame = StructType::create(gen->ctx, {gen->t_int, gen->t_chunkid, gen->t_int, gen->t_chunkid}, "t_stackframe");
+    t_frame = StructType::create(gen->ctx, {gen->t_int, gen->t_chunkid, gen->t_int, gen->t_chunkid}, "t_stackframe", true);
     t_framep = t_frame->getPointerTo();
 }
 
@@ -20,13 +20,15 @@ Value* ProcessStack::getEmptyStack(GenerationContext* gctx) {
 
         // Create an emoty stackframe with all 0's
         ChunkMapper cm_stack(gctx, gen->type_stack);
-        auto emptyStack = gen->builder.CreateAlloca(t_frame);
+//        auto emptyStack = gen->builder.CreateAlloca(t_frame);
+        Value* emptyStack = gen->builder.CreateAlloca(IntegerType::get(gen->ctx, 8), gen->generateAlignedSizeOf(t_frame));
+        emptyStack = gen->builder.CreatePointerCast(emptyStack, t_frame->getPointerTo());
         gen->builder.CreateMemSet( emptyStack
                                 , ConstantInt::get(gen->t_int8, 0)
-                                , gen->generateSizeOf(t_frame)
+                                , gen->generateAlignedSizeOf(t_frame)
                                 , emptyStack->getPointerAlignment(gen->pinsModule->getDataLayout())
                                 );
-        auto newStackChunkID = cm_stack.generatePut(gen->generateSizeOf(t_frame), emptyStack);
+        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), emptyStack);
 
         // Store it in the global
         gen->builder.CreateStore(newStackChunkID, GV_emptyStack);
@@ -39,24 +41,28 @@ Value* ProcessStack::getEmptyStack(GenerationContext* gctx) {
 Value* ProcessStack::generateNewFrame(Value* oldPC, Value* rframe_chunkID, CallInst* callSite, Value* prevFrame_chunkID) {
 
     // Find register index of the register where to put the result
+    Value* regOffset;
     auto iIdx = gen->valueRegisterIndex.find(callSite);
-    assert(iIdx != gen->valueRegisterIndex.end());
-    auto idx = iIdx->second;
+    if(iIdx == gen->valueRegisterIndex.end()) {
+        regOffset = ConstantInt::get(gen->t_int, 0);
+    } else {
+        auto idx = iIdx->second;
 
-    // Determine the byte offset within the register to this index
-    auto regType = PointerType::get(gen->registerLayout[callSite->getParent()->getParent()].registerLayout, 0);
-    auto regs = gen->builder.CreateBitOrPointerCast( ConstantPointerNull::get(regType)
-                                                  , regType
-                                                  );
-    auto regOffset = gen->builder.CreateGEP( regs
-                                          , { ConstantInt::get(gen->t_int, 0)
-                                            , ConstantInt::get(gen->t_int, idx)
-                                            }
-                                          );
-    regOffset = gen->builder.CreatePtrToInt(regOffset, gen->t_int);
+        // Determine the byte offset within the register to this index
+        auto regType = PointerType::get(gen->registerLayout[callSite->getParent()->getParent()].registerLayout, 0);
+        auto regs = gen->builder.CreateBitOrPointerCast(ConstantPointerNull::get(regType), regType);
+        regOffset = gen->builder.CreateGEP( regs
+                                               , { ConstantInt::get(gen->t_int, 0)
+                                                 , ConstantInt::get(gen->t_int, idx)
+                                                  }
+        );
+        regOffset = gen->builder.CreatePtrToInt(regOffset, gen->t_int);
+    }
 
     // Create a new frame
-    auto frame = gen->builder.CreateAlloca(t_frame);
+//    auto frame = gen->builder.CreateAlloca(t_frame);
+    Value* frame = gen->builder.CreateAlloca(IntegerType::get(gen->ctx, 8), gen->generateAlignedSizeOf(t_frame));
+    frame = gen->builder.CreatePointerCast(frame, t_frame->getPointerTo());
     auto prevPC = gen->builder.CreateGEP( frame
                                        , { ConstantInt::get(gen->t_int, 0)
                                          , ConstantInt::get(gen->t_int, 0)
@@ -160,8 +166,8 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
 
         // Put the new frame on the stack
         ChunkMapper cm_stack(gctx, gen->type_stack);
-        auto newStackChunkID = cm_stack.generatePut(gen->generateSizeOf(t_frame), frame);
-        gctx->gen->setDebugLocation(newStackChunkID, __FILE__, __LINE__);
+        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), frame);
+        gctx->gen->setDebugLocation(newStackChunkID, __FILE__, __LINE__ - 1);
         gen->builder.CreateStore(newStackChunkID, pStackChunkID);
 
     }
@@ -196,6 +202,11 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
     auto loc = gen->programLocations[&*F.getEntryBlock().begin()];
     assert(loc);
     gen->builder.CreateStore(ConstantInt::get(gen->t_int, loc), dst_pc);
+//    builder.CreateCall( gen->pins("printf")
+//            , { gen->generateGlobalString("Call: jumping to %u\n")
+//                                , ConstantInt::get(gen->t_int, loc)
+//                        }
+//    );
 }
 
 void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
@@ -299,11 +310,16 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
 
             // Set the TID of the tuple
             auto tid_p = gen->lts["processes"][gctx->thread_id]["tid"].getValue(gctx->src);
-            auto tid = builder.CreateIntCast(gen->builder.CreateLoad(tid_p), gen->t_int64, false);
+            auto tid32 = gen->builder.CreateLoad(tid_p);
+            auto tid = builder.CreateIntCast(tid32, gen->t_int64, false);
             gen->builder.CreateStore(tid, newTres_tid);
 
             // Set the result of the tuple
-            auto retValVoidP = builder.CreateIntToPtr(retVal, gen->t_voidp);
+            Value* retValVoidP;
+            if(retVal->getType()->isIntegerTy()) retValVoidP = builder.CreateIntToPtr(retVal, gen->t_voidp);
+            else if(retVal->getType()->isPointerTy()) retValVoidP = builder.CreatePointerCast(retVal, gen->t_voidp);
+            else retValVoidP = ConstantPointerNull::get(gen->t_voidp);
+
             gen->builder.CreateStore(retValVoidP, newTres_res);
 
 //            builder.CreateCall( gen->pins("printf")
@@ -314,10 +330,20 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
 //                    );
 
             // Append the new tuple to the list of tuples
+            // OLD STYLE: this is using appending, but we will do array-style setting instead using the ID as index
+//            ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);
+//            auto tres_p = gen->lts["tres"].getValue(gctx->svout);
+//            auto newListOfTRes = cm_tres.generateCloneAndAppend(tres_p, newTres, gen->generateSizeOf(t_tres));
+//            gen->builder.CreateStore(newListOfTRes, tres_p);
+
             ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);
             auto tres_p = gen->lts["tres"].getValue(gctx->svout);
-            auto newListOfTRes = cm_tres.generateCloneAndAppend(tres_p, newTres, gen->generateSizeOf(t_tres));
+            auto siz = gen->generateSizeOf(t_tres);
+            auto offset = gen->builder.CreateMul(siz, tid32);
+            Value* newLength;
+            auto newListOfTRes = cm_tres.generateCloneAndModify(tres_p, offset, newTres, siz, newLength);
             gen->builder.CreateStore(newListOfTRes, tres_p);
+
         }
     }
 

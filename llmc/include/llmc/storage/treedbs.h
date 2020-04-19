@@ -1,6 +1,12 @@
+#pragma once
+
 #include <iostream>
+#include <llmc/common/tls.h>
+#include <libfrugi/Settings.h>
 
 #include "interface.h"
+
+using namespace libfrugi;
 
 extern "C" {
 #include "../../../../dtree/treedbs/include/treedbs/treedbs-ll.h"
@@ -8,10 +14,11 @@ extern "C" {
 
 namespace llmc::storage {
 
+template<typename VarLengthStorage>
 class TreeDBSStorage : public StorageInterface {
 public:
 
-    TreeDBSStorage() {
+    TreeDBSStorage(): _stateLength(256), _hashmapDataScale(28), _hashmapRootScale(28), slim(0) {
 
     }
 
@@ -19,9 +26,19 @@ public:
     }
 
     void init() {
-        _store = TreeDBSLLcreate_dm(_stateLength, 24, 2, nullptr, 0, 0, 0);
+        _varLengthStorage.init();
+        _store = TreeDBSLLcreate_dm(_stateLength, _hashmapRootScale, _hashmapRootScale - _hashmapDataScale, nullptr, 0, slim, 0);
         assert(_store);
         std::cout << "Storage initialized with state length " << _stateLength << std::endl;
+        _scratchPadStorageLength = 16;
+    }
+
+    void thread_init() {
+        if constexpr(VarLengthStorage::needsThreadInit()) {
+            _varLengthStorage.thread_init();
+        }
+        _scratchPadStorage = (int*)malloc(_stateLength * _scratchPadStorageLength * 2 * sizeof(int));
+        _scratchPadNext = _scratchPadStorage.get();
     }
 
     using StateSlot = StorageInterface::StateSlot;
@@ -54,19 +71,25 @@ public:
 //    };
 //    using InsertedState = typename DTree::IndexInserted;
 
+    StateID getIDFromTreeT(tree_t tree) {
+        return TreeDBSLLindex(_store, tree) | (_stateLength << 40);
+    }
+
+    tree_ref_t getTreeRefFromID(StateID id) {
+        return id.getData() & 0x000000FFFFFFFFFFULL;
+    }
+
     StateID find(FullState* state) {
-        tree_ref_t ref;
-        if(TreeDBSLLfopZeroExtend_ref(_store, (int*)state->getData(), state->getLength(), state->isRoot(), false, &ref) >= 0) {
-            return ref;
-        } else {
-            return StateID::NotFound();
-        }
+        return find((int*)state->getData(), state->getLength(), state->isRoot());
     }
 
     StateID find(StateSlot* state, size_t length, bool isRoot) {
-        tree_ref_t ref;
-        if(TreeDBSLLfopZeroExtend_ref(_store, (int*)state, length, isRoot, false, &ref) >= 0) {
-            return ref;
+        if(length != _stateLength || isRoot == false) {
+            return _varLengthStorage.find(state, length, isRoot);
+        }
+        int t[_stateLength * 2];
+        if(TreeDBSLLfop_incr(_store, (int*)state, nullptr, t, false) >= 0) {
+            return getIDFromTreeT(t);
         } else {
             return StateID::NotFound();
         }
@@ -81,63 +104,117 @@ public:
     }
 
     InsertedState insert(const StateSlot* state, size_t length, bool isRoot) {
-        tree_ref_t ref;
-        if(length > getMaxStateLength()) {
-            fprintf(stderr, "Max state length exceeded: %zu < %zu\n", getMaxStateLength(), length);
-            abort();
+        if(length != _stateLength || isRoot == false) {
+            return _varLengthStorage.insert(state, length, isRoot);
         }
-        auto seen = TreeDBSLLfopZeroExtend_ref(_store, (int*)state, length, isRoot, true, &ref);
-        return InsertedState(ref, seen == 0);
+        tree_t scratchPadForState = newScratchPadForState();
+        auto seen = TreeDBSLLfop_incr(_store, (int*)state, NULL, scratchPadForState, true);
+        return InsertedState(getIDFromTreeT(scratchPadForState), seen == 0);
+    }
+
+    tree_t findScratchPadForState(tree_ref_t treeRef) {
+        tree_t pad = _scratchPadStorage.get();
+        tree_t padEnd = pad + _scratchPadStorageLength * _stateLength * 2;
+        while(pad < padEnd) {
+
+            if(TreeDBSLLindex(_store, pad) == treeRef) {
+                return pad;
+            }
+
+            pad = (tree_t)((uint32_t*)pad + _stateLength * 2);
+        }
+        return nullptr;
+    }
+
+    tree_t newScratchPadForState() {
+        tree_t pad = _scratchPadStorage.get();
+        assert(pad);
+        tree_t padEnd = pad + _scratchPadStorageLength * _stateLength * 2;
+        auto p = _scratchPadNext.get();
+        auto p2 = (tree_t)((uint32_t*)p + _stateLength * 2);
+        if(p2 >= padEnd) {
+            p2 = pad;
+        }
+        _scratchPadNext = p2;
+        assert(p);
+        return p;
     }
 
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
-//        tree_ref_t ref;
-//        int o[_stateLength*2 + 1];
-//        int n[_stateLength*2 + 1];
-//        o[_stateLength*2] = 0;
-//        n[_stateLength*2] = 0;
-
-        if(delta.getOffset() + delta.getLength() > getMaxStateLength()) {
-            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", delta.getLength(), delta.getOffset());
-            abort();
+        size_t length = determineLength(stateID);
+        size_t newLength = std::max(length, delta.getOffset() + delta.getLength());
+        if(newLength != _stateLength || isRoot == false) {
+            return _varLengthStorage.insert(stateID, delta, isRoot);
         }
-        int o[_stateLength*2];
-        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
-        memcpy(o+_stateLength+delta.getOffset(), delta.getData(), delta.getLengthInBytes());
-        return insert((StateSlot*)o+_stateLength, stateID.getData() >> 40, isRoot);
-
-//        int* o = (int*)malloc(_stateLength*4*sizeof(int));
-//        int* n = o + _stateLength * 2;
-//        fprintf(stderr, "_stateLength: %zu\n",_stateLength);
-//        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
-//        memcpy(n+_stateLength, o+_stateLength, _stateLength * sizeof(int));
-//        memcpy(n+_stateLength+delta.getOffset(), delta.getData(), delta.getLengthInBytes());
-//        auto seen = TreeDBSLLfop_incr_ref(_store, o, n, isRoot, true, &ref);
-//        free(o);
-//        return InsertedState(ref, seen == 0);
-
-        //        tree_ref_t ref;
-//        auto seen = TreeDBSLLfopZeroExtend_ref(_store, state, length, true, &ref);
-//        return InsertedState(ref, seen > 0);
+//        if(delta.getOffset() + delta.getLength() > getMaxStateLength()) {
+//            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", delta.getLength(), delta.getOffset());
+//            abort();
+//        }
+        StateSlot v[newLength];
+        tree_ref_t treeRef = getTreeRefFromID(stateID);
+        tree_t prevScratchPad = findScratchPadForState(treeRef);
+        tree_t newScratchPad = newScratchPadForState();
+        if(length == _stateLength && prevScratchPad) {
+            memcpy(v, prevScratchPad + _stateLength, sizeof(int) * _stateLength);
+        } else {
+            get(v, stateID, isRoot);
+        }
+        memcpy(v + delta.getOffset(), delta.getData(), delta.getLengthInBytes());
+        if(delta.getOffset() > length) {
+            memset(v+length, 0, (delta.getOffset() - length) * sizeof(StateSlot));
+        }
+        auto seen = TreeDBSLLfop_incr(_store, (int*)v, prevScratchPad, newScratchPad, true);
+        return InsertedState(getIDFromTreeT(newScratchPad), seen == 0);
     }
 
-    FullState* get(StateID id, bool isRoot) {
+    FullState* get(StateID stateID, bool isRoot) {
+        assert(_stateLength);
+        size_t length = determineLength(stateID);
+        if(length != _stateLength || isRoot == false) {
+            return _varLengthStorage.get(stateID, isRoot);
+        }
         int d[_stateLength*2];
-        TreeDBSLLget_isroot(_store, (tree_ref_t)id.getData(), d, isRoot);
-        int length = id.getData() >> 40;
-        auto fsd = FullState::create(isRoot, length, (StateSlot*)d + _stateLength);
+        TreeDBSLLget(_store, getTreeRefFromID(stateID), d);
+        auto fsd = FullState::create(isRoot, _stateLength, (StateSlot*)d + _stateLength);
         return fsd;
     }
 
-    bool get(StateSlot* dest, StateID id, bool isRoot) {
+    bool get(StateSlot* dest, StateID stateID, bool isRoot) {
+        assert(_stateLength);
+        size_t length = determineLength(stateID);
+        if(length != _stateLength || isRoot == false) {
+            return _varLengthStorage.get(dest, stateID, isRoot);
+        }
         int d[_stateLength*2];
-        TreeDBSLLget_isroot(_store, (tree_ref_t)id.getData(), d, isRoot);
-        int length = id.getData() >> 40;
-        memcpy(dest, d + _stateLength, length * sizeof(int));
+        TreeDBSLLget(_store, getTreeRefFromID(stateID), d);
+        memcpy(dest, (StateSlot*)d + _stateLength, _stateLength * sizeof(int));
+        return true;
+    }
+
+    bool getPartial(StateID stateID, size_t offset, StateSlot* data, size_t length, bool isRoot) {
+        assert(_stateLength);
+        size_t len = determineLength(stateID);
+        if(len != _stateLength || isRoot == false) {
+            return _varLengthStorage.getPartial(stateID, offset, data, length, isRoot);
+        }
+        tree_ref_t treeRef = getTreeRefFromID(stateID);
+        tree_t scratchPad = findScratchPadForState(treeRef);
+        if(scratchPad) {
+            memcpy(data, (StateSlot*)scratchPad + _stateLength + offset, length * sizeof(StateSlot));
+            return true;
+        }
+        int d[_stateLength*2];
+        TreeDBSLLget(_store, getTreeRefFromID(stateID), d);
+        memcpy(data, (StateSlot*)d + _stateLength + offset, length * sizeof(StateSlot));
         return true;
     }
 
     void printStats() {
+        auto stats = _varLengthStorage.getStatistics();
+        std::cout << "Subcontainer uses " << stats.getBytesInUse()
+                  << ", reserved " << stats.getBytesReserved()
+                  << " for " << stats.getElements() << " elements"
+                  << std::endl;
     }
 
     static bool constexpr accessToStates() {
@@ -152,25 +229,73 @@ public:
         return true;
     }
 
-    static bool constexpr needsThreadInit() {
-        return false;
+    size_t determineLength(StateID const& s) const {
+        return (s.getData() & 0x7FFFFFFFFFFFFFFFULL) >> 40;
     }
 
-    size_t setMaxStateLength(size_t stateLength) {
-         _stateLength = stateLength;
+    static bool constexpr needsThreadInit() {
+        return true;
+    }
+
+    void setMaxStateLength(size_t stateLength) {
+        _stateLength = stateLength;
     }
 
     size_t getMaxStateLength() const {
         return _stateLength;
     }
 
-    size_t determineLength(StateID const& s) const {
-        return s.getData() >> 40;
+    void setSettings(Settings& settings) {
+        size_t hashmapRootScale = settings["storage.treedbs.hashmaproot_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.treedbs.hashmap_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.hashmaproot_scale"].asUnsignedValue();
+        hashmapRootScale = hashmapRootScale ? hashmapRootScale : settings["storage.hashmap_scale"].asUnsignedValue();
+        if(hashmapRootScale) {
+            _hashmapRootScale = hashmapRootScale;
+        }
+
+        size_t hashmapDataScale = settings["storage.treedbs.hashmapdata_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.treedbs.hashmap_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.hashmapdata_scale"].asUnsignedValue();
+        hashmapDataScale = hashmapDataScale ? hashmapDataScale : settings["storage.hashmap_scale"].asUnsignedValue();
+        if(hashmapDataScale) {
+            _hashmapDataScale = hashmapDataScale;
+        }
+
+        slim = settings["storage.treedbs.slim"].asUnsignedValue();
+
+        size_t fixedvectorsize = settings["storage.fixedvectorsize"].asUnsignedValue();
+        if(fixedvectorsize) _stateLength = fixedvectorsize;
+
+        _varLengthStorage.setSettings(settings);
+    }
+
+    Statistics getStatistics() {
+        Statistics stats;
+        TreeDBSLLstats2(_store, &stats._bytesInUse, &stats._bytesReserved);
+        stats._bytesMaximum = stats._bytesReserved;
+
+        stats += _varLengthStorage.getStatistics();
+
+        return stats;
+    }
+
+    std::string getName() const {
+        std::stringstream ss;
+        ss << "treedbs<" << _varLengthStorage.getName() << ">(" << _hashmapRootScale << "," << _hashmapDataScale << ", " << slim << ")";
+        return ss.str();
     }
 
 private:
+    VarLengthStorage _varLengthStorage;
     size_t _stateLength;
     treedbs_ll_t _store;
+    llmc::TLS<int> _scratchPadStorage;
+    llmc::TLS<int> _scratchPadNext;
+    size_t _scratchPadStorageLength;
+    size_t _hashmapDataScale;
+    size_t _hashmapRootScale;
+    size_t slim;
 };
 
 } // namespace llmc::storage

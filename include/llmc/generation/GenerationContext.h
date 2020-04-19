@@ -48,7 +48,7 @@ public:
     Value* svout;
 
     /**
-     * Pointer to the edgle label array that will be reported to LTSmin
+     * Pointer to the edge label array that will be reported to LTSmin
      */
     Value* edgeLabelValue;
 

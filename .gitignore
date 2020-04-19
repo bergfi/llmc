@@ -1,1 +1,7 @@
 build
+tests/correctness/*/*.so
+tests/correctness/*/*.ll
+tests/correctness/*/*.dot
+tests/performance/*/*.so
+tests/performance/*/*.ll
+tests/performance/*/*.dot

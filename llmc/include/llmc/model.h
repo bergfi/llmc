@@ -40,7 +40,7 @@ public:
     using StateSlot = llmc::storage::StorageInterface::StateSlot;
 
 public:
-    VModelChecker<STORAGE>* getModelChecker() {
+    VModelChecker<STORAGE>* getModelChecker() const {
         return mc;
     };
     StateID getSourceState() const {
@@ -50,11 +50,11 @@ public:
     VContext(VModelChecker<STORAGE>* mc_, VModel<STORAGE>* model): model(model), mc(mc_), sourceState(0) {}
 
     template<typename T>
-    T* getModel() {
+    T* getModel() const {
         return (T*)model;
     }
 
-    VModel<STORAGE>* getModel() {
+    VModel<STORAGE>* getModel() const {
         return model;
     }
 
@@ -63,6 +63,16 @@ public:
     VModelChecker<STORAGE>* mc;
     StateID sourceState;
 };
+
+template<typename STORAGE, typename MODELCHECKER=VModelChecker<STORAGE>>
+class VContextImpl: public VContext<STORAGE> {
+public:
+    VContextImpl(VModelChecker<STORAGE>* mc_, VModel<STORAGE>* model): VContext<STORAGE>(mc_, model) {}
+    MODELCHECKER* getModelChecker() const {
+        return static_cast<MODELCHECKER*>(this->mc);
+    };
+};
+
 
 template<typename STORAGE>
 class VModel: public Model {
@@ -82,6 +92,7 @@ public:
 
     virtual void init(Context* ctx) = 0;
 
+    virtual size_t getNext(StateID const& s, Context* ctx, size_t tg) = 0;
     virtual size_t getNextAll(StateID const& s, Context* ctx) = 0;
     virtual StateID getInitial(Context* ctx) = 0;
     virtual llmc::statespace::Type* getStateVectorType() = 0;
