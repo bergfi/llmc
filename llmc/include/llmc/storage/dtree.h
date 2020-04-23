@@ -130,6 +130,10 @@ public:
                                 isRoot);
         return InsertedState(idx.getState().getData(), idx.isInserted());
     }
+    InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
+        auto idx = _store.deltaMayExtend(DTreeIndex(stateID.getData()), offset, data, length, isRoot);
+        return InsertedState(idx.getState().getData(), idx.isInserted());
+    }
 
     FullState* get(StateID id, bool isRoot) {
         DTreeIndex treeID(id.getData());
@@ -183,6 +187,14 @@ public:
 
         std::cout << ", fill=" << ((double)100 * mapDataStats.bytesUsed / mapDataStats.bytesReserved) << "%" << std::endl;
         std::cout << "data hash map size in bytes: " << mapDataStats.bytesUsed << " / " << mapDataStats.bytesReserved << std::endl;
+
+        std::unordered_map<size_t,size_t> allSizes;
+        allSizes.reserve(128);
+        _store.getAllSizes(allSizes);
+        std::cout << "Size distribution of states:" << std::endl;
+        for(auto& sz: allSizes) {
+            std::cout << sz.first << ": " << sz.second << std::endl;
+        }
     }
 
     Statistics getStatistics() {

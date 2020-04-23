@@ -18,6 +18,15 @@ template<typename VarLengthStorage>
 class TreeDBSStorage : public StorageInterface {
 public:
 
+    class Context {
+    public:
+//        SimpleAllocator<int> queue;
+
+//        tree_t newEntryToEdit(size_t slots) {
+//            return queue.allocate(slots);
+//        }
+    };
+
     TreeDBSStorage(): _stateLength(256), _hashmapDataScale(28), _hashmapRootScale(28), slim(0) {
 
     }
@@ -140,11 +149,25 @@ public:
         return p;
     }
 
+    // things todo tomorrow:
+    //   - remove this comment and put it somewhere else
+    //   - make delta not use malloc, that's stupid
+    //   - make sure treedbs is not compromised
+    //   - have a look at DFS
+
+
+
+
+
+
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
-        size_t length = determineLength(stateID);
-        size_t newLength = std::max(length, delta.getOffset() + delta.getLength());
+        return insert(stateID, delta.getOffset(), delta.getLength(), delta.getData(), isRoot);
+    }
+    InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
+        size_t originLength = determineLength(stateID);
+        size_t newLength = std::max(originLength, offset + length);
         if(newLength != _stateLength || isRoot == false) {
-            return _varLengthStorage.insert(stateID, delta, isRoot);
+            return _varLengthStorage.insert(stateID, offset, length, data, isRoot);
         }
 //        if(delta.getOffset() + delta.getLength() > getMaxStateLength()) {
 //            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", delta.getLength(), delta.getOffset());
@@ -154,14 +177,14 @@ public:
         tree_ref_t treeRef = getTreeRefFromID(stateID);
         tree_t prevScratchPad = findScratchPadForState(treeRef);
         tree_t newScratchPad = newScratchPadForState();
-        if(length == _stateLength && prevScratchPad) {
+        if(originLength == _stateLength && prevScratchPad) {
             memcpy(v, prevScratchPad + _stateLength, sizeof(int) * _stateLength);
         } else {
             get(v, stateID, isRoot);
         }
-        memcpy(v + delta.getOffset(), delta.getData(), delta.getLengthInBytes());
-        if(delta.getOffset() > length) {
-            memset(v+length, 0, (delta.getOffset() - length) * sizeof(StateSlot));
+        memcpy(v + offset, data, length * sizeof(StateSlot));
+        if(offset > originLength) {
+            memset(v+originLength, 0, (offset - originLength) * sizeof(StateSlot));
         }
         auto seen = TreeDBSLLfop_incr(_store, (int*)v, prevScratchPad, newScratchPad, true);
         return InsertedState(getIDFromTreeT(newScratchPad), seen == 0);

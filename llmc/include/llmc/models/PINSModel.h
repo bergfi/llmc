@@ -265,9 +265,11 @@ public:
 //            printf("pins_chunk_cam64(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
 //            printArray((char*)data, len);
 //            printf("\n");
-            auto d = ctx->mc->newDelta(offset / sizeof(llmc::storage::StorageInterface::StateSlot), (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot));
-            auto s = ctx->mc->newSubState(ctx, idx, *d);
-            ctx->mc->deleteDelta(d);
+
+            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
+            size_t deltaOffset = offset / sizeof(llmc::storage::StorageInterface::StateSlot);
+            size_t deltaLength = len / sizeof(llmc::storage::StorageInterface::StateSlot);
+            auto s = ctx->mc->newSubState(ctx, idx, deltaOffset, deltaLength, (llmc::storage::StorageInterface::StateSlot*)data);
             return s.getData();
         } else {
 //            printf("pins_chunk_cam64_unaligned(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
@@ -294,9 +296,9 @@ public:
         StateSlot tempSlots[nrSlots];
         ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
         memcpy(((char*)tempSlots) + offset_remainder, data, len);
-        auto d = ctx->mc->newDelta(offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
-        auto s = ctx->mc->newSubState(ctx, idx, *d);
-        ctx->mc->deleteDelta(d);
+//        auto d = ctx->mc->newDelta(offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
+        auto s = ctx->mc->newSubState(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), nrSlots, tempSlots);
+//        ctx->mc->deleteDelta(d);
         return s.getData();
     }
 
@@ -336,9 +338,9 @@ public:
 
     virtual int pins_chunk_cam(void* ctx_, int type, int idx, int offset, char* data, int len) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
-        auto d = ctx->mc->newDelta(offset, (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot*));
-        auto s = ctx->mc->newSubState(ctx, idx, *d);
-        ctx->mc->deleteDelta(d);
+//        auto d = ctx->mc->newDelta(offset, (llmc::storage::StorageInterface::StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot*));
+        auto s = ctx->mc->newSubState(ctx, idx, offset, len / sizeof(llmc::storage::StorageInterface::StateSlot*), (llmc::storage::StorageInterface::StateSlot*)data);
+//        ctx->mc->deleteDelta(d);
         return s.getData();
     }
 

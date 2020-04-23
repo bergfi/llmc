@@ -10,7 +10,7 @@
 #include <llmc/modelcheckers/interface.h>
 #include <llmc/modelcheckers/multicoresimple.h>
 #include <llmc/modelcheckers/singlecore.h>
-#include <llmc/modelcheckers/multicore.h>
+#include <llmc/modelcheckers/multicore_bitbetter.h>
 #include <llmc/statespace/listener.h>
 #include <llmc/storage/interface.h>
 #include <llmc/storage/dtree.h>

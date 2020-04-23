@@ -167,6 +167,24 @@ public:
         return insert(buffer, newLength, isRoot);
 
     }
+    InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
+        FullState* old = get(stateID, isRoot);
+                LLMC_DEBUG_ASSERT(old);
+                LLMC_DEBUG_ASSERT(old->getLength());
+
+        size_t newLength = std::max(old->getLength(), length + offset);
+
+        StateSlot buffer[newLength];
+
+        memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
+        memcpy(buffer+offset, data, length * sizeof(StateSlot));
+        if(offset > old->getLength()) {
+            memset(buffer+length, 0, (offset - old->getLength()) * sizeof(StateSlot));
+        }
+
+        return insert(buffer, newLength, isRoot);
+
+    }
 
     FullState* get(StateID id, bool isRoot) {
         read_only_lock lock(mtx);

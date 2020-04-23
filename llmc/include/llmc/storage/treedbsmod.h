@@ -99,22 +99,25 @@ public:
     }
 
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
+        return insert(stateID, delta.getOffset(), delta.getLength(), delta.getData(), isRoot);
+    }
+    InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
 //        tree_ref_t ref;
 //        int o[_stateLength*2 + 1];
 //        int n[_stateLength*2 + 1];
 //        o[_stateLength*2] = 0;
 //        n[_stateLength*2] = 0;
 
-        size_t newLength = std::max(delta.getOffset() + delta.getLength(), stateID.getData() >> 40);
+        size_t newLength = std::max(offset + length, stateID.getData() >> 40);
 
         if(newLength > getMaxStateLength()) {
-            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", delta.getLength(), delta.getOffset());
+            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", length, offset);
             abort();
         }
         int o[_stateLength*2];
         if(stateID.getData() == 0xFFFFFFFFFFFFFFFFULL) abort();
         TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
-        memcpy(o+_stateLength+delta.getOffset(), delta.getData(), delta.getLengthInBytes());
+        memcpy(o+_stateLength+offset, data, length * sizeof(StateSlot));
         return insert((StateSlot*)o+_stateLength, newLength, isRoot);
 
 //        int* o = (int*)malloc(_stateLength*4*sizeof(int));
@@ -122,7 +125,7 @@ public:
 //        fprintf(stderr, "_stateLength: %zu\n",_stateLength);
 //        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
 //        memcpy(n+_stateLength, o+_stateLength, _stateLength * sizeof(int));
-//        memcpy(n+_stateLength+delta.getOffset(), delta.getData(), delta.getLengthInBytes());
+//        memcpy(n+_stateLength+offset, data, delta.getLengthInBytes());
 //        auto seen = TreeDBSLLfop_incr_ref(_store, o, n, isRoot, true, &ref);
 //        free(o);
 //        return InsertedState(ref, seen == 0);

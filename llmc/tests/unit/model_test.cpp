@@ -1,5 +1,5 @@
 #include <llmc/modelcheckers/singlecore.h>
-#include <llmc/modelcheckers/multicore.h>
+#include <llmc/modelcheckers/multicore_bitbetter.h>
 #include <llmc/modelcheckers/multicoresimple.h>
 #include <llmc/storage/stdmap.h>
 #include <llmc/storage/dtree.h>

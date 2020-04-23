@@ -126,6 +126,9 @@ public:
     }
 
     InsertedState insert(StateID const& stateID, Delta const& delta, bool isRoot) {
+        return insert(stateID, delta.getOffset(), delta.getLength(), delta.getData(), isRoot);
+    }
+    InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
         FullState* old = get(stateID, isRoot);
         LLMC_DEBUG_ASSERT(old);
         LLMC_DEBUG_ASSERT(old->getLength());
@@ -136,14 +139,14 @@ public:
 //        }
 //        fprintf(stderr, "\n");
 
-        size_t newLength = std::max(old->getLength(), delta.getLength() + delta.getOffset());
+        size_t newLength = std::max(old->getLength(), length + offset);
 
         StateSlot buffer[newLength];
 
         memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
-        memcpy(buffer+delta.getOffset(), delta.getData(), delta.getLength() * sizeof(StateSlot));
-        if(delta.getOffset() > old->getLength()) {
-            memset(buffer+old->getLength(), 0, (delta.getOffset() - old->getLength()) * sizeof(StateSlot));
+        memcpy(buffer+offset, data, length * sizeof(StateSlot));
+        if(offset > old->getLength()) {
+            memset(buffer+old->getLength(), 0, (offset - old->getLength()) * sizeof(StateSlot));
         }
 //        fprintf(stderr, "new:");
 //        for(int i=0; i < newLength; ++i) {

@@ -174,6 +174,62 @@ TYPED_TEST(StorageTest, BasicInsertZero) {
     EXPECT_FALSE(stateIDsFound.exists());
 }
 
+TYPED_TEST(StorageTest, BasicInsertZero32) {
+    TypeParam storage;
+
+    typename TypeParam::StateSlot states[] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    // 0 0 -> a
+    // a a -> b
+    // b b -> c
+    // c c -> d
+    // d d -> e
+
+    // 1 0 -> a
+    // 0 0 -> b
+    // a b -> c
+    // b b -> d
+    // c d -> e
+    // d d -> f
+    // e f -> g
+    // f f -> h
+    // g h -> i
+
+    // not store 0 0
+
+    // nothing (maybe root node)
+
+    // 0 0  is stored in treedbs
+    // 1 0 -> a
+    // a b -> c
+    // c d -> e
+    // e f -> g
+    // g 0 -> i
+
+    // dtree:
+    // 1 0 -> a
+    // a 0 -> b
+
+    // b 0 -> c (root so 16 bytes)
+
+    typename TypeParam::InsertedState stateID;
+    typename TypeParam::StateID stateIDsFound;
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(states)/sizeof(*states));
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    stateID = storage.insert(states, sizeof(states)/sizeof(*states), true);
+    EXPECT_TRUE(stateID.isInserted());
+
+    auto stats = storage.getStatistics();
+    printf("_bytesInUse: %zu\n", stats._bytesInUse);
+
+}
+
 TYPED_TEST(StorageTest, BasicDuplicateInsert) {
     TypeParam storage;
 

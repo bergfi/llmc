@@ -14,6 +14,7 @@ target_link_libraries(storage_test -fPIC
         gtest gmock gtest_main
         -lpthread -lm
         libtreedbs
+        -latomic
 )
 add_test(storage_test storage_test)
 
@@ -33,5 +34,6 @@ target_link_libraries(model_test -fPIC
         gtest gmock gtest_main
         -lpthread -lm libfrugi
         libtreedbs
+        -latomic
         )
 add_test(model_test model_test)

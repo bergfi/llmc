@@ -248,14 +248,15 @@ public:
 
     struct Delta {
 
-        static Delta& create(Delta* buffer, size_t offset, StateSlot* data, size_t len) {
-            buffer->_offset = offset;
-            buffer->_length = len;
-            memcpy(buffer->_data, data, len * sizeof(StateSlot));
-            return *buffer;
+        static Delta& create(void* buffer, size_t offset, const StateSlot* data, size_t len) {
+            Delta* delta = (Delta*)buffer;
+            delta->_offset = offset;
+            delta->_length = len;
+            memcpy(delta->_data, data, len * sizeof(StateSlot));
+            return *delta;
         }
 
-        static Delta* create(size_t offset, StateSlot* data, size_t len) {
+        static Delta* create(size_t offset, const StateSlot* data, size_t len) {
             Delta* d = (Delta*)malloc(sizeof(Delta) + len * sizeof(StateSlot));
             create(d, offset, data, len);
             return d;

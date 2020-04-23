@@ -5,7 +5,7 @@
 #include <llmc/modelcheckers/interface.h>
 #include <llmc/modelcheckers/multicoresimple.h>
 #include <llmc/modelcheckers/singlecore.h>
-#include <llmc/modelcheckers/multicore.h>
+#include <llmc/modelcheckers/multicore_bitbetter.h>
 #include <llmc/statespace/listener.h>
 #include <llmc/storage/interface.h>
 #include <llmc/storage/dtree.h>
@@ -14,160 +14,12 @@
 #include <llmc/storage/cchm.h>
 #include <llmc/storage/treedbs.h>
 #include <llmc/storage/treedbsmod.h>
+#include "StateIdentifier.h"
 
 using StateSlot = llmc::storage::StorageInterface::StateSlot;
+using ModelStateIdentifier = StateIdentifier<StateSlot>;
 
 typedef uint64_t MemOffset;
-
-struct StateIdentifier {
-    size_t getLength() const {
-        return data >> 40;
-    }
-
-    template<typename Context>
-    void pull(Context* ctx, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, 0, slots, getLength(), isRoot);
-    }
-
-    template<typename Context>
-    void pull(Context* ctx, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, 0, (StateSlot*)slots, getLength(), isRoot);
-    }
-
-    template<typename Context>
-    void pullPartial(Context* ctx, size_t offset, size_t length, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset, slots, length, isRoot);
-    }
-
-    template<typename Context>
-    void pullPartial(Context* ctx, size_t offset, size_t length, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset, (StateSlot*)slots, length, isRoot);
-    }
-
-    template<typename Context>
-    void push(Context* ctx, StateSlot* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newTransition(ctx, length, slots, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, length, slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void push(Context* ctx, StateSlot* slots, size_t length, std::string const& label) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-
-        StateIdentifier labelID = {0};
-        if(label.length() >= 8) {
-            labelID.init(ctx, (StateSlot*) label.c_str(), label.length() / 4);
-        }
-
-        data = mc->newTransition(ctx, length, slots, TransitionInfoUnExpanded::construct(labelID)).getData();
-    }
-
-    template<typename Context>
-    void push(Context* ctx, void* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newTransition(ctx, length, (StateSlot*)slots, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, length, (StateSlot*)slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void init(Context* ctx, StateSlot* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newState(ctx, 0, length, slots).getState().getData();
-        } else {
-            data = mc->newSubState(ctx, length, slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void init(Context* ctx, void* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newState(ctx, 0, length, (StateSlot*)slots).getState().getData();
-        } else {
-            data = mc->newSubState(ctx, length, (StateSlot*)slots).getData();
-        }
-    }
-
-    template<typename Context>
-    size_t appendBytes(Context* ctx, size_t length, const void* slots, bool isRoot = false) {
-        size_t len = getLength();
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(len, (StateSlot*)slots, length/4);
-        if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, data, *d).getData();
-        }
-        mc->deleteDelta(d);
-        return len * 4;
-    }
-
-    template<typename Context>
-    void modifyBytes(Context* ctx, size_t offset, size_t length, const void* slots, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(offset/4, (StateSlot*)slots, length/4);
-        if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, data, *d).getData();
-        }
-        mc->deleteDelta(d);
-    }
-
-    template<typename Context>
-    void readBytes(Context* ctx, size_t offset, size_t length, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset/4, slots, length/4, isRoot);
-    }
-
-    template<typename Context>
-    void readBytes(Context* ctx, size_t offset, size_t length, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset/4, (StateSlot*)slots, length/4, isRoot);
-    }
-
-    template<typename Context, typename T>
-    void readMemory(Context* ctx, size_t offset, T& var, bool isRoot = false) const {
-        readBytes(ctx, offset, sizeof(T), &var, isRoot);
-    }
-
-    template<typename Context, typename T>
-    void writeMemory(Context* ctx, size_t offset, T const& var, bool isRoot = false) {
-        modifyBytes(ctx, offset, sizeof(T), &var, isRoot);
-    }
-
-    template<typename Context, typename T>
-    bool cas(Context* ctx, MemOffset ptr, T& expected, T const& desired) {
-        T localCopy;
-        readBytes(ctx, ptr, sizeof(T), &localCopy);
-
-        // CAS failed
-        if(memcmp(&localCopy, &expected, sizeof(T))) {
-            memcpy(&expected, &localCopy, sizeof(T));
-            return true;
-
-        // CAS succeeded
-        } else {
-            modifyBytes(ctx, ptr, sizeof(T), &desired);
-            return false;
-        }
-    }
-
-
-    uint64_t data;
-};
 
 enum class DidWhat {
     NOTHING,
@@ -224,16 +76,16 @@ struct Proc {
 struct SV {
     uint32_t state;
     uint32_t procs;
-    StateIdentifier threadResults;
-    StateIdentifier memory;
-    StateIdentifier proc[];
+    ModelStateIdentifier threadResults;
+    ModelStateIdentifier memory;
+    ModelStateIdentifier proc[];
 };
 
 
 class MSQModel: public VModel<llmc::storage::StorageInterface> {
 public:
     size_t getNextAll(StateID const& s, Context* ctx) override {
-        StateIdentifier id{s.getData()};
+        ModelStateIdentifier id{s.getData()};
         StateSlot svmem[id.getLength()];
         id.pull(ctx, svmem, true);
         SV& sv = *(SV*)svmem;
@@ -330,7 +182,7 @@ public:
             if(!allOK) {
                 printf("Invalid end state: %zx\n", s.getData());
             } else {
-                printf("Valid end state: %zx\n", s.getData());
+//                printf("Valid end state: %zx\n", s.getData());
 
             }
         }
@@ -342,7 +194,7 @@ public:
         abort();
     }
 
-    DidWhat getNextProcess(StateID const& s, Context* ctx, StateIdentifier& threadResults, StateIdentifier& mem, Proc& proc, std::ostream& label) {
+    DidWhat getNextProcess(StateID const& s, Context* ctx, ModelStateIdentifier& threadResults, ModelStateIdentifier& mem, Proc& proc, std::ostream& label) {
         auto pcCurrent = proc.pc;
 
         label << "[" << proc.id << "@" << pcCurrent << "] ";
@@ -563,7 +415,7 @@ public:
             dequeues = settings["msq.dequeues"].asUnsignedValue();
         }
 
-        size_t initSize = sizeof(SV) + (enqueues + dequeues) * sizeof(StateIdentifier);
+        size_t initSize = sizeof(SV) + (enqueues + dequeues) * sizeof(ModelStateIdentifier);
         assert((initSize & 3) == 0);
 
         StateSlot svmem[initSize / 4];
@@ -609,7 +461,7 @@ public:
         sv.memory.init(ctx, memory, sizeof(memory)/4);
         printf("Uploading initial memory %zx (%zu)\n", sv.memory.data, sv.memory.getLength());
 
-        StateIdentifier init;
+        ModelStateIdentifier init;
         init.init(ctx, svmem, initSize / 4, true);
         printf("Uploading initial state %zx %u %u length: %zu\n", init.data, sv.state, sv.procs, initSize / 4);
         return init.data;
@@ -625,7 +477,7 @@ public:
     TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx,
                                      TransitionInfoUnExpanded const& tinfo_) const override {
 
-        StateIdentifier labelID = tinfo_.get<StateIdentifier>();
+        ModelStateIdentifier labelID = tinfo_.get<ModelStateIdentifier>();
         StateSlot str[labelID.getLength()];
         labelID.pull(ctx, str);
 

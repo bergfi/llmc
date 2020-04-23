@@ -150,6 +150,22 @@ public:
         return insertedState.getState();
     }
 
+    llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t offset, size_t length, const StateSlot* slots, TransitionInfoUnExpanded const& transition) override {
+        auto ctx = static_cast<Context*>(ctx_);
+        StateID const& stateID = ctx->sourceState;
+        auto insertedState = _storage.insert(stateID, offset, length, slots, true);
+        updatable_lock lock(mtx);
+        if(insertedState.isInserted()) {
+            _states++;
+            stateQueueNew.push_back(insertedState.getState());
+//            auto fsd = getState(ctx_, insertedState.getState());
+//            _listener.writeState(this->getModel(), insertedState.getState(), fsd->getLength(), fsd->getData());
+        }
+//        _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
+        _transitions++;
+        return insertedState.getState();
+    }
+
     llmc::storage::StorageInterface::FullState* getState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
         auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {
@@ -171,6 +187,10 @@ public:
     }
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, Delta const& delta) override {
         auto insertedState = _storage.insert(stateID, delta, false);
+        return insertedState.getState();
+    }
+    llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t offset, size_t length, const llmc::storage::StorageInterface::StateSlot* data) override {
+        auto insertedState = _storage.insert(stateID, offset, length, data, false);
         return insertedState.getState();
     }
 
@@ -206,9 +226,13 @@ public:
         return false;
     }
 
-    llmc::storage::StorageInterface::Delta* newDelta(size_t offset, StateSlot* data, size_t len) override {
-        return llmc::storage::StorageInterface::Delta::create(offset, data, len);
+    llmc::storage::StorageInterface::Delta& newDelta(void* buffer, size_t offset, const StateSlot* data, size_t len) override {
+        return llmc::storage::StorageInterface::Delta::create(buffer, offset, data, len);
     }
+
+//    llmc::storage::StorageInterface::Delta* newDelta(size_t offset, StateSlot* data, size_t len) override {
+//        return llmc::storage::StorageInterface::Delta::create(offset, data, len);
+//    }
 
     void deleteDelta(llmc::storage::StorageInterface::Delta* d) override {
         return llmc::storage::StorageInterface::Delta::destroy(d);

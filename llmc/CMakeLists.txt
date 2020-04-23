@@ -7,6 +7,7 @@ add_executable(llmc
     ssgen.cpp
     pins/pinsWrapper.cpp
 )
+
 set_property(TARGET llmc PROPERTY CXX_STANDARD 17)
 set_property(TARGET llmc PROPERTY CXX_STANDARD_REQUIRED ON)
 
@@ -18,6 +19,7 @@ target_link_libraries(llmc -Wl,-E -fPIC
     libfrugi
     dtree
     libtreedbs
+        -latomic
 )
 
 include_directories(

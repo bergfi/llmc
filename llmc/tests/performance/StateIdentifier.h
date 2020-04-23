@@ -84,6 +84,16 @@ struct StateIdentifier {
     }
 
     template<typename Context>
+    void initBytes(Context* ctx, void* slots, size_t length, bool isRoot = false) {
+        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
+        if(isRoot) {
+            data = mc->newState(ctx, 0, length / sizeof(StateSlot), (StateSlot*)slots).getState().getData();
+        } else {
+            data = mc->newSubState(ctx, length / sizeof(StateSlot), (StateSlot*)slots).getData();
+        }
+    }
+
+    template<typename Context>
     void init(Context* ctx, void* slots, size_t length, bool isRoot = false) {
         VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
         if(isRoot) {
@@ -97,26 +107,26 @@ struct StateIdentifier {
     size_t appendBytes(Context* ctx, size_t length, const void* slots, bool isRoot = false) {
         size_t len = getLength();
         VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(len, (StateSlot*)slots, length/4);
+//        auto d = mc->newDelta(len, (StateSlot*)slots, length/4);
         if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
+            data = mc->newTransition(ctx, len, length/4, (StateSlot*)slots, TransitionInfoUnExpanded::None()).getData();
         } else {
-            data = mc->newSubState(ctx, data, *d).getData();
+            data = mc->newSubState(ctx, data, len, length/4, (StateSlot*)slots).getData();
         }
-        mc->deleteDelta(d);
+//        mc->deleteDelta(d);
         return len * 4;
     }
 
     template<typename Context>
     void modifyBytes(Context* ctx, size_t offset, size_t length, const void* slots, bool isRoot = false) {
         VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(offset/4, (StateSlot*)slots, length/4);
+//        auto d = mc->newDelta(offset/4, (StateSlot*)slots, length/4);
         if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
+            data = mc->newTransition(ctx, offset/4, length/4, (StateSlot*)slots, TransitionInfoUnExpanded::None()).getData();
         } else {
-            data = mc->newSubState(ctx, data, *d).getData();
+            data = mc->newSubState(ctx, data, offset/4, length/4, (StateSlot*)slots).getData();
         }
-        mc->deleteDelta(d);
+//        mc->deleteDelta(d);
     }
 
     template<typename Context>

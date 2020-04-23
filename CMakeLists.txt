@@ -6,7 +6,7 @@ set (llmc_VERSION_PATCH 0)
 
 include(CheckIncludeFile)
 
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -mcx16")
 
 # Set build-specific flags
 set(CMAKE_C_FLAGS_DEBUG "-O0 -UNDEBUG -DYYDEBUG=1 ${CMAKE_CXX_FLAGS_DEBUG}")

@@ -9,6 +9,8 @@
 
 #include <libfrugi/System.h>
 #include <libfrugi/Settings.h>
+#include <algorithm>
+#include <iomanip>
 
 using namespace libfrugi;
 
@@ -82,14 +84,16 @@ public:
         double elapsedSeconds;
         size_t stateSlotsInsertedIntoStorage;
 
+        std::unordered_map<size_t, size_t> _sizeHistogram;
+
         Context(MultiCoreModelChecker* mc, Model* model, size_t threadID): VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker>(mc, model), localStates(0), localTransitions(0), threadID(threadID), first(false), stateSlotsInsertedIntoStorage(0) {}
     };
 
-    MultiCoreModelChecker(Model* m): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0) {
+    MultiCoreModelChecker(Model* m): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _threads(0), _stats(1), _buildSizeHistogram(0) {
         _rootTypeID = 0;
     }
 
-    MultiCoreModelChecker(Model* m, Listener& listener): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _centralStateEnqueues(0), _centralStateDequeues(0), _listener(listener) {
+    MultiCoreModelChecker(Model* m, Listener& listener): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _centralStateEnqueues(0), _centralStateDequeues(0), _threads(0), _stats(1), _listener(listener), _buildSizeHistogram(0) {
         _rootTypeID = 0;
     }
 
@@ -151,6 +155,14 @@ public:
     void go() {
         Context ctx(this, this->_m, 0);
 
+        size_t fixedSize = this->_m->getStateLength();
+        if(fixedSize) {
+            if constexpr(Storage::stateHasFixedLength()) {
+                _storage.setMaxStateLength(fixedSize);
+            }
+        }
+
+
         _storage.init();
         if constexpr(Storage::needsThreadInit()) {
             _storage.thread_init();
@@ -180,6 +192,13 @@ public:
 
             _states.fetch_add(ctx.localStates, std::memory_order_relaxed);
             _transitions.fetch_add(ctx.localTransitions, std::memory_order_relaxed);
+
+            if(_buildSizeHistogram) {
+                for(auto& s: ctx._sizeHistogram) {
+                    _sizeHistogram[s.first] += s.second;
+                }
+                ctx._sizeHistogram.clear();
+            }
 
             ctx.localStates = 0;
             ctx.localTransitions = 0;
@@ -240,13 +259,58 @@ public:
         printf("Thread efficiency: %3.3lf%%\n", 100 * threadElapsed / (_threads * elapsed));
         printf("Central enqueues: %zu (%3.3lf%%)\n", _centralStateEnqueues.load(std::memory_order_relaxed), (double)100 * _centralStateEnqueues.load(std::memory_order_relaxed) / _states);
         printf("Central dequeues: %zu (%3.3lf%%)\n", _centralStateDequeues.load(std::memory_order_relaxed), (double)100 * _centralStateDequeues.load(std::memory_order_relaxed) / _states);
-        printf("Storage Stats (%s):\n", _storage.getName().c_str());
-        //Stats
-        auto stats = _storage.getStatistics();
-        _storage.printStats();
-        printf("Inserted vector-data in bytes: %zu\n", 4 * stateSlotsInsertedIntoStorage);
-        printf("Compression ratio (%zu used bytes): %lf (%lf bytes per state)\n", stats._bytesInUse, 4 * (double)ctx.stateSlotsInsertedIntoStorage / (stats._bytesInUse), (double)stats._bytesInUse / _states);
-        printf("Compression ratio (%zu reserved bytes): %lf (%lf bytes per state)\n", stats._bytesReserved, 4 * (double)ctx.stateSlotsInsertedIntoStorage / (stats._bytesReserved), (double)stats._bytesReserved / _states);
+        if(_stats) {
+            printf("Storage Stats (%s):\n", _storage.getName().c_str());
+            //Stats
+            auto stats = _storage.getStatistics();
+            _storage.printStats();
+            printf("Inserted vector-data in bytes: %zu\n", 4 * stateSlotsInsertedIntoStorage);
+            printf("Compression ratio (%zu used bytes", stats._bytesInUse);
+            if(stats._bytesInUse < 1024) {
+                printf("): ");
+            } else if(stats._bytesInUse < 1024*1024) {
+                printf(" = ~%.2lfKiB): ", (double) stats._bytesInUse / 1024);
+            } else if(stats._bytesInUse < 1024*1024*1024) {
+                printf(" = ~%.2lfMiB): ", (double) stats._bytesInUse / 1024 / 1024);
+            } else {
+                printf(" = ~%.2lfGiB): ", (double) stats._bytesInUse / 1024 / 1024 / 1024);
+            }
+            printf("%lf (%lf bytes per state)\n", 4 * (double)ctx.stateSlotsInsertedIntoStorage / (stats._bytesInUse), (double)stats._bytesInUse / _states);
+            printf("Compression ratio (%zu reserved bytes", stats._bytesReserved);
+            if(stats._bytesReserved < 1024) {
+                printf("): ");
+            } else if(stats._bytesInUse < 1024*1024) {
+                printf(" = ~%.2lfKiB): ", (double) stats._bytesReserved / 1024);
+            } else if(stats._bytesReserved < 1024*1024*1024) {
+                printf(" = ~%.2lfMiB): ", (double) stats._bytesReserved / 1024 / 1024);
+            } else {
+                printf(" = ~%.2lfGiB): ", (double) stats._bytesReserved / 1024 / 1024 / 1024);
+            }
+            printf("%lf (%lf bytes per state)\n", 4 * (double)ctx.stateSlotsInsertedIntoStorage / (stats._bytesReserved), (double)stats._bytesReserved / _states);
+        }
+        printf("Complete size histogram:\n");
+        printf(" size  nr of (sub)states\n");
+
+        std::vector<size_t> keys;
+
+        keys.reserve(_sizeHistogram.size());
+        size_t max = 0;
+        for(auto& it : _sizeHistogram) {
+            keys.push_back(it.first);
+            max = max > it.second ? max : it.second;
+        }
+        std::sort(keys.begin(), keys.end());
+        for (auto& len : keys) {
+            size_t nr = _sizeHistogram[len];
+            std::cout << std::setfill(' ') << std::setw(5) << len;
+            std::cout << ", ";
+            std::cout << std::setfill(' ') << std::setw(10) << nr;
+//            std::cout << " ";
+//            for(size_t e = (64*nr+max-1)/max; e--;) {
+//                std::cout << "#";
+//            }
+            std::cout << std::endl;
+        }
     }
 
     StateID getNextQueuedState(Context* ctx) {
@@ -255,6 +319,12 @@ public:
         _states.fetch_add(ctx->localStates, std::memory_order_relaxed);
         _transitions.fetch_add(ctx->localTransitions, std::memory_order_relaxed);
 
+        if(_buildSizeHistogram) {
+            for(auto& s: ctx->_sizeHistogram) {
+                _sizeHistogram[s.first] += s.second;
+            }
+            ctx->_sizeHistogram.clear();
+        }
         ctx->localStates = 0;
         ctx->localTransitions = 0;
 
@@ -308,6 +378,9 @@ public:
         // the type ID could be extracted from stateID...
         auto insertedState = newState(ctx_, _rootTypeID, length, slots);
         if (insertedState.isInserted()) {
+            if(_buildSizeHistogram) {
+                ctx->_sizeHistogram[length]++;
+            }
             ctx->localStates++;
             if (ctx->first) {
                 queueState(ctx, insertedState.getState().getData());
@@ -334,6 +407,31 @@ public:
         StateID const& stateID = *reinterpret_cast<StateID const*>(&ctx->sourceState);
         auto insertedState = _storage.insert(stateID, delta, true);
         if(insertedState.isInserted()) {
+            if(_buildSizeHistogram) {
+                ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
+            }
+            ctx->localStates++;
+            if(ctx->first) {
+                queueState(ctx, insertedState.getState());
+                ctx->first = false;
+            } else{
+                ctx->stateQueueNew.push_back(insertedState.getState().getData());
+                tprintf("[%i] added to local queue: %16xu\n", ctx->threadID, insertedState.getState());
+            }
+            ctx->stateSlotsInsertedIntoStorage += _storage.determineLength(insertedState.getState());
+        }
+        ctx->localTransitions++;
+        return insertedState.getState().getData();
+    }
+
+    llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t offset, size_t length, const StateSlot* slots, TransitionInfoUnExpanded const& transition) override {
+        Context* ctx = static_cast<Context*>(ctx_);
+        StateID const& stateID = *reinterpret_cast<StateID const*>(&ctx->sourceState);
+        auto insertedState = _storage.insert(stateID, offset, length, slots, true);
+        if(insertedState.isInserted()) {
+            if(_buildSizeHistogram) {
+                ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
+            }
             ctx->localStates++;
             if(ctx->first) {
                 queueState(ctx, insertedState.getState());
@@ -362,14 +460,30 @@ public:
     }
 
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
+        Context* ctx = static_cast<Context*>(ctx_);
         auto insertedState = _storage.insert(slots, length, false);
+        if(_buildSizeHistogram && insertedState.isInserted()) {
+            ctx->_sizeHistogram[length]++;
+        }
         assert(insertedState.getState().getData());
         return insertedState.getState();
     }
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID_, llmc::storage::StorageInterface::Delta const& delta) override {
+        Context* ctx = static_cast<Context*>(ctx_);
         StateID const& stateID = *reinterpret_cast<StateID const*>(&stateID_);
         auto insertedState = _storage.insert(stateID, delta, false);
+        if(_buildSizeHistogram && insertedState.isInserted()) {
+            ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
+        }
         return insertedState.getState().getData();
+    }
+    llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t offset, size_t length, const llmc::storage::StorageInterface::StateSlot* data) override {
+        Context* ctx = static_cast<Context*>(ctx_);
+        auto insertedState = _storage.insert(stateID, offset, length, data, false);
+        if(_buildSizeHistogram && insertedState.isInserted()) {
+            ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
+        }
+        return insertedState.getState();
     }
 
     llmc::storage::StorageInterface::FullState* getSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
@@ -404,8 +518,12 @@ public:
         return false;
     }
 
-    llmc::storage::StorageInterface::Delta* newDelta(size_t offset, llmc::storage::StorageInterface::StateSlot* data, size_t len) override {
-        return Delta::create(offset, data, len);
+//    llmc::storage::StorageInterface::Delta* newDelta(size_t offset, llmc::storage::StorageInterface::StateSlot* data, size_t len) override {
+//        return Delta::create(offset, data, len);
+//    }
+
+    llmc::storage::StorageInterface::Delta& newDelta(void* buffer, size_t offset, const StateSlot* data, size_t len) override {
+        return llmc::storage::StorageInterface::Delta::create(buffer, offset, data, len);
     }
 
     void deleteDelta(llmc::storage::StorageInterface::Delta* d) override {
@@ -433,6 +551,8 @@ public:
 
     void setSettings(Settings& settings) {
         _threads = settings["threads"].asUnsignedValue();
+        if(settings["nostats"].asUnsignedValue()) _stats = 0;
+        if(settings["buildsizehistogram"].asUnsignedValue()) _buildSizeHistogram = 1;
     }
 
 protected:
@@ -449,6 +569,9 @@ protected:
     Storage _storage;
     Listener& _listener;
     size_t _threads;
+    size_t _stats;
     std::vector<Context> _workerContexts;
     std::vector<pthread_t> _workers;
+    std::unordered_map<size_t, size_t> _sizeHistogram;
+    bool _buildSizeHistogram;
 };

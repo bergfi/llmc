@@ -5,7 +5,7 @@
 #include <llmc/modelcheckers/interface.h>
 #include <llmc/modelcheckers/multicoresimple.h>
 #include <llmc/modelcheckers/singlecore.h>
-#include <llmc/modelcheckers/multicore.h>
+#include <llmc/modelcheckers/multicore_bitbetter.h>
 #include <llmc/statespace/listener.h>
 #include <llmc/storage/interface.h>
 #include <llmc/storage/dtree.h>
@@ -14,160 +14,13 @@
 #include <llmc/storage/cchm.h>
 #include <llmc/storage/treedbs.h>
 #include <llmc/storage/treedbsmod.h>
+#include "StateIdentifier.h"
 
 using StateSlot = llmc::storage::StorageInterface::StateSlot;
+using ModelStateIdentifier = StateIdentifier<StateSlot>;
 
 typedef uint64_t MemOffset;
 
-struct StateIdentifier {
-    size_t getLength() const {
-        return data >> 40;
-    }
-
-    template<typename Context>
-    void pull(Context* ctx, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, 0, slots, getLength(), isRoot);
-    }
-
-    template<typename Context>
-    void pull(Context* ctx, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, 0, (StateSlot*)slots, getLength(), isRoot);
-    }
-
-    template<typename Context>
-    void pullPartial(Context* ctx, size_t offset, size_t length, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset, slots, length, isRoot);
-    }
-
-    template<typename Context>
-    void pullPartial(Context* ctx, size_t offset, size_t length, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset, (StateSlot*)slots, length, isRoot);
-    }
-
-    template<typename Context>
-    void push(Context* ctx, StateSlot* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newTransition(ctx, length, slots, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, length, slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void push(Context* ctx, StateSlot* slots, size_t length, std::string const& label) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-
-        StateIdentifier labelID = {0};
-        if(label.length() >= 8) {
-            labelID.init(ctx, (StateSlot*) label.c_str(), label.length() / 4);
-        }
-
-        data = mc->newTransition(ctx, length, slots, TransitionInfoUnExpanded::construct(labelID)).getData();
-    }
-
-    template<typename Context>
-    void push(Context* ctx, void* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newTransition(ctx, length, (StateSlot*)slots, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, length, (StateSlot*)slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void init(Context* ctx, StateSlot* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newState(ctx, 0, length, slots).getState().getData();
-        } else {
-            data = mc->newSubState(ctx, length, slots).getData();
-        }
-    }
-
-    template<typename Context>
-    void init(Context* ctx, void* slots, size_t length, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        if(isRoot) {
-            data = mc->newState(ctx, 0, length, (StateSlot*)slots).getState().getData();
-        } else {
-            data = mc->newSubState(ctx, length, (StateSlot*)slots).getData();
-        }
-    }
-
-    template<typename Context>
-    size_t appendBytes(Context* ctx, size_t length, const void* slots, bool isRoot = false) {
-        size_t len = getLength();
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(len, (StateSlot*)slots, length/4);
-        if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, data, *d).getData();
-        }
-        mc->deleteDelta(d);
-        return len * 4;
-    }
-
-    template<typename Context>
-    void modifyBytes(Context* ctx, size_t offset, size_t length, const void* slots, bool isRoot = false) {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        auto d = mc->newDelta(offset/4, (StateSlot*)slots, length/4);
-        if(isRoot) {
-            data = mc->newTransition(ctx, *d, TransitionInfoUnExpanded::None()).getData();
-        } else {
-            data = mc->newSubState(ctx, data, *d).getData();
-        }
-        mc->deleteDelta(d);
-    }
-
-    template<typename Context>
-    void readBytes(Context* ctx, size_t offset, size_t length, StateSlot* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset/4, slots, length/4, isRoot);
-    }
-
-    template<typename Context>
-    void readBytes(Context* ctx, size_t offset, size_t length, void* slots, bool isRoot = false) const {
-        VModelChecker<llmc::storage::StorageInterface>* mc = ctx->getModelChecker();
-        mc->getStatePartial(ctx, data, offset/4, (StateSlot*)slots, length/4, isRoot);
-    }
-
-    template<typename Context, typename T>
-    void readMemory(Context* ctx, size_t offset, T& var, bool isRoot = false) const {
-        readBytes(ctx, offset, sizeof(T), &var, isRoot);
-    }
-
-    template<typename Context, typename T>
-    void writeMemory(Context* ctx, size_t offset, T const& var, bool isRoot = false) {
-        modifyBytes(ctx, offset, sizeof(T), &var, isRoot);
-    }
-
-    template<typename Context, typename T>
-    bool cas(Context* ctx, MemOffset ptr, T& expected, T const& desired) {
-        T localCopy;
-        readBytes(ctx, ptr, sizeof(T), &localCopy);
-
-        // CAS failed
-        if(memcmp(&localCopy, &expected, sizeof(T))) {
-            memcpy(&expected, &localCopy, sizeof(T));
-            return true;
-
-            // CAS succeeded
-        } else {
-            modifyBytes(ctx, ptr, sizeof(T), &desired);
-            return false;
-        }
-    }
-
-
-    uint64_t data;
-};
 
 enum class DidWhat {
     NOTHING,
@@ -177,26 +30,28 @@ enum class DidWhat {
 
 struct Philo {
     uint32_t id;
-    uint32_t state;
     uint32_t pc;
-    uint32_t fork;
+    uint32_t state;  // number of times Philo ate
+    uint32_t fork;  // 'tis our "left fork" -- our "right fork" is held by the next Philo
+    // values ^^^: 0 == "free" ; 1 == "I have it" ; 2 == "Someone else has it"
+    static constexpr auto MAX_EATS = 3ul;
 };
 
 struct SV {
     uint32_t state;
     uint32_t philos;
-    StateIdentifier philo[];
+    ModelStateIdentifier philo[];
 };
 
 
-class MSQModel: public VModel<llmc::storage::StorageInterface> {
+class PhiloModel: public VModel<llmc::storage::StorageInterface> {
 public:
     size_t getNextAll(StateID const& s, Context* ctx) override {
-        StateIdentifier id{s.getData()};
+        ModelStateIdentifier id{s.getData()};
         StateSlot svmem[id.getLength()];
         id.pull(ctx, svmem, true);
         SV& sv = *(SV*)svmem;
-//        printf("getNextAll %u %u\n", sv.state, sv.procs);
+//	  printf("getNextAll %u %u\n", sv.state, sv.procs);
         size_t r = 0;
         StateSlot svmemCopy[id.getLength()];
 
@@ -207,20 +62,42 @@ public:
             memcpy(svmemCopy, svmem, sizeof(svmemCopy));
             SV& svCopy = *(SV*)svmemCopy;
 
-            StateSlot philomem[svCopy.philo[idx].getLength()];
-            svCopy.philo[idx].pull(ctx, philomem);
+            // get (sub-state of) this philo
+            auto& thisphilo = svCopy.philo[idx];
+            StateSlot philomem[thisphilo.getLength()];
+            thisphilo.pull(ctx, philomem);
             Philo& philo = *(Philo*)philomem;
 
-            auto doneSomething = getNextPhilo(s, ctx, philo, ss);
+            // get reference to next philo (who holds our right fork)
+            const auto idxnext = (idx+1) % svCopy.philos;
+            auto& nextphilo = svCopy.philo[idxnext];
+
+            // make philo do something  (good luck with that)
+            auto doneSomething = getNextPhilo(ctx, philo, nextphilo, ss);
+            //printf("%s\n", ss.str().c_str());
+            // if philo did something, update:
             if(doneSomething != DidWhat::NOTHING) {
-                svCopy.philo[idx].push(ctx, philomem, svCopy.philo[idx].getLength());
+                // first its own contents (i.e. the sub-state) in the svCopy.philo vector
+                thisphilo.push(ctx, philomem, thisphilo.getLength());
+                // then the whole (changed) state of the model checker
                 id.push(ctx, svmemCopy, id.getLength(), ss.str());
                 r++;
             }
         }
 
-        if(r == 0) {
-            // TODO: check for correct end state
+        if (r == 0) {
+            // Check for correct end state
+            bool allSatisfied = true;
+            decltype(Philo::state) state = 0;
+            auto idx = sv.philos;
+            for (; allSatisfied && idx-- ;) {
+                sv.philo[idx].readMemory(ctx, offsetof(Philo,state), state);
+                allSatisfied &= state == Philo::MAX_EATS;
+            }
+            if (allSatisfied)
+                printf("All philosopher are satisfied\n");
+            else
+                printf("Philosopher %d is still hungry: it ate %u (out of %u) times\n", idx, state, Philo::MAX_EATS);
         }
 
         return r;
@@ -230,44 +107,131 @@ public:
         abort();
     }
 
-    DidWhat getNextPhilo(StateID const& s, Context* ctx, Philo& proc, std::ostream& label) {
-        auto pcCurrent = proc.pc;
+    /// @brief This implements a naive algorithm to the philosophers problem:
+    ///			0. think
+    ///			1. try to pick left  fork; failed ? goto 0.
+    ///			2. try to pick right fork; failed ? release left fork && goto 0.
+    ///			3. eat
+    ///			4. release left fork
+    ///			5. release right fork
+    ///			6. hungry ? goto 0. : die
+    /// @param  p: this Philo (fetched from the MC state)
+    /// @param np: next Philo (its ModelStateIdentifier)
+    /// @return  DidWhat::NOTHING   if 6. above and no longer hungry
+    ///	         DidWhat::SOMETHING if 0. to 6. above (except ^^^ )
+    ///	         DidWhat::ENDED	 otherwise (error)
+    DidWhat getNextPhilo(Context* ctx,
+                         Philo& p,
+                         ModelStateIdentifier& np,
+                         std::ostream& label)
+    {
+        using Fork = decltype(Philo::fork);
+        static auto constexpr OFFSET = offsetof(Philo,fork);
+        auto pcCurrent = p.pc;
 
-        label << "[" << proc.id << "@" << pcCurrent << "] ";
-//        std::cout << "[" << proc.id << "@" << pcCurrent << "] " << std::endl;
+        label << "[" << p.id << "@" << pcCurrent << "] ";
 
-        proc.pc++;
-//        printf("PC %u;\n", pcCurrent);
-        switch(pcCurrent) {
-            case 0:
-                return DidWhat::NOTHING;
-            default:
-                abort();
+        p.pc++;
+        switch(pcCurrent)
+        {
+        case 0 : {
+            label << "thinking ";
+            return DidWhat::SOMETHING;
         }
-        return proc.state ? DidWhat::ENDED : DidWhat::SOMETHING;
+        case 1 : {
+            label << "trying to pick left fork... ";
+            Fork expected = 0;
+            const Fork desired = 1;
+            if (p.fork == 0) {
+                label << "succeeded ";
+                p.fork = 1;
+            } else {
+                label << "failed ";
+                p.pc = 0;
+            }
+            return DidWhat::SOMETHING;
+        }
+        case 2 : {
+            label << "trying to pick right fork... ";
+            Fork expected = 0;
+            const Fork desired = 2;
+            auto picked = np.cas(ctx, (MemOffset) OFFSET, expected, desired);
+            if (picked) {
+                label << "yes! CAS succeeded ";
+            } else {
+                label << "nope, CAS failed ";
+                p.fork = 0;
+                label << "so I released left fork ";
+                p.pc = 0;
+            }
+            return DidWhat::SOMETHING;
+        }
+        case 3 : {
+            label << "eating, yum yum ";
+            p.state += p.state < Philo::MAX_EATS ? 1 : 0;
+            return DidWhat::SOMETHING;
+        }
+        case 4 : {
+            label << "releasing left fork after eating ";
+            p.fork = 0;
+            return DidWhat::SOMETHING;
+        }
+        case 5 : {
+            label << "releasing right fork after eating ";
+            Fork expected = 2;
+            const Fork desired = 0;
+            auto released = np.cas(ctx, (MemOffset) OFFSET, expected, desired);
+            if (released)
+                label << "CAS succeeded ";
+            else
+                label << "CAS failed??? Couldn't release right fork !!! ";
+            return DidWhat::SOMETHING;
+        }
+        case 6 : {
+            label << "finished loop ";
+            if (p.state < Philo::MAX_EATS) {
+                label << "but still hungry ";
+                p.pc = 0;
+                return DidWhat::SOMETHING;
+            } else {
+                label << "now I'm ded ";
+                p.pc = 6;
+                return DidWhat::NOTHING;
+            }
+        }
+        default:
+            abort();
+            break;
+        }
+        return DidWhat::ENDED;
     }
 
     StateID getInitial(Context* ctx) override {
         Settings& settings = Settings::global();
 
-
-        size_t philos = 1;
+        auto philos = 1ul<<1ul;
 
         if(settings["philos.philos"].asUnsignedValue()) {
             philos = settings["philos.philos"].asUnsignedValue();
         }
 
-        size_t initSize = sizeof(SV) + (philos) * sizeof(StateIdentifier);
-        assert((initSize & 3) == 0);
+        auto initSize = sizeof(SV) + (philos) * sizeof(ModelStateIdentifier);
+        assert( ! (initSize & 3));
 
         StateSlot svmem[initSize / 4];
         memset(svmem, 0, initSize);
         SV& sv = *(SV*)svmem;
         sv.state = 3;
+        sv.philos = philos;
+        for (auto i=philos; i-- ;) {
+            Philo p;
+            p.id = i;
+            p.pc = p.state = p.fork = 0;  // shorturl.at/fryDP
+            sv.philo[i].init(ctx, &p, sizeof(Philo)/4);
+            printf("Uploading philosopher #%d: %zx\n", i, sv.philo[i].data);
+        }
 
-        // TODO: init
-
-        StateIdentifier init;
+        ModelStateIdentifier init;
         init.init(ctx, svmem, initSize / 4, true);
         printf("Uploading initial state %zx %u %u\n", init.data, sv.state, sv.philos);
         return init.data;
@@ -283,7 +247,7 @@ public:
     TransitionInfo getTransitionInfo(VContext<llmc::storage::StorageInterface>* ctx,
                                      TransitionInfoUnExpanded const& tinfo_) const override {
 
-        StateIdentifier labelID = tinfo_.get<StateIdentifier>();
+        ModelStateIdentifier labelID = tinfo_.get<ModelStateIdentifier>();
         StateSlot str[labelID.getLength()];
         labelID.pull(ctx, str);
 
@@ -305,7 +269,7 @@ void goMSQ() {
     std::ofstream f;
     f.open("out.dot", std::fstream::trunc);
 
-    auto model = new MSQModel();
+    auto model = new PhiloModel();
     llmc::statespace::DotPrinter<MC, VModel<llmc::storage::StorageInterface>
     > printer(f);
     MC mc(model, printer);
@@ -319,7 +283,7 @@ struct HashCompareMurmur {
     static constexpr uint64_t hashForZero = 0x7208f7fa198a2d81ULL;
     static constexpr uint64_t seedForZero = 0xc6a4a7935bd1e995ULL*8ull;
 
-    __attribute__((always_inline))
+    __attribute__((always_inline))  // he he
     bool equal( const T& j, const T& k ) const {
         return j == k;
     }
@@ -346,8 +310,8 @@ void goSelectStorage() {
         goMSQ<llmc::storage::TreeDBSStorageModified, ModelChecker>();
     } else if(settings["storage"].asString() == "dtree") {
         goMSQ<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>, HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>();
-//    } else if(settings["storage"].asString() == "dtree2") {
-//        goPINS<llmc::storage::DTree2Storage<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>,SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+//	} else if(settings["storage"].asString() == "dtree2") {
+//		goPINS<llmc::storage::DTree2Storage<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>,SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
     } else {
         std::cout << "Wrong or no storage selected: " << settings["storage"].asString() << std::endl;
     }
@@ -372,7 +336,7 @@ int main(int argc, char** argv) {
     Settings& settings = Settings::global();
     int c = 0;
     while ((c = getopt(argc, argv, "m:s:t:-:")) != -1) {
-//    while ((c = getopt_long(argc, argv, "i:d:s:t:T:p:-:", long_options, &option_index)) != -1) {
+//	while ((c = getopt_long(argc, argv, "i:d:s:t:T:p:-:", long_options, &option_index)) != -1) {
         switch(c) {
             case 't':
                 if(optarg) {
