@@ -46,7 +46,9 @@ public:
         if constexpr(VarLengthStorage::needsThreadInit()) {
             _varLengthStorage.thread_init();
         }
-        _scratchPadStorage = (int*)malloc(_stateLength * _scratchPadStorageLength * 2 * sizeof(int));
+        int* sp = (int*)malloc(_stateLength * _scratchPadStorageLength * 2 * sizeof(int));
+        _scratchPadStorage = sp;
+        memset(sp, 0, _stateLength * _scratchPadStorageLength * 2 * sizeof(int));
         _scratchPadNext = _scratchPadStorage.get();
     }
 
@@ -177,15 +179,21 @@ public:
         tree_ref_t treeRef = getTreeRefFromID(stateID);
         tree_t prevScratchPad = findScratchPadForState(treeRef);
         tree_t newScratchPad = newScratchPadForState();
+
         if(originLength == _stateLength && prevScratchPad) {
             memcpy(v, prevScratchPad + _stateLength, sizeof(int) * _stateLength);
+            if(prevScratchPad == newScratchPad) {
+                prevScratchPad = nullptr;
+            }
         } else {
             get(v, stateID, isRoot);
         }
+
         memcpy(v + offset, data, length * sizeof(StateSlot));
         if(offset > originLength) {
             memset(v+originLength, 0, (offset - originLength) * sizeof(StateSlot));
         }
+
         auto seen = TreeDBSLLfop_incr(_store, (int*)v, prevScratchPad, newScratchPad, true);
         return InsertedState(getIDFromTreeT(newScratchPad), seen == 0);
     }

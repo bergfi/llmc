@@ -102,37 +102,34 @@ public:
         return insert(stateID, delta.getOffset(), delta.getLength(), delta.getData(), isRoot);
     }
     InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
-//        tree_ref_t ref;
-//        int o[_stateLength*2 + 1];
-//        int n[_stateLength*2 + 1];
-//        o[_stateLength*2] = 0;
-//        n[_stateLength*2] = 0;
 
-        size_t newLength = std::max(offset + length, stateID.getData() >> 40);
+        size_t oldLength = stateID.getData() >> 40;
+
+        size_t newLength = std::max(offset + length, oldLength);
 
         if(newLength > getMaxStateLength()) {
-            fprintf(stderr, "Max state length exceeded: delta with length %zu and offset %zu\n", length, offset);
+            fprintf(stderr, "Max state length (%zu) exceeded: delta with length %zu and offset %zu\n", getMaxStateLength(), length, offset);
             abort();
         }
+
         int o[_stateLength*2];
+        int n[_stateLength*2];
         if(stateID.getData() == 0xFFFFFFFFFFFFFFFFULL) abort();
+        memset(o, 0, sizeof(o));
         TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
-        memcpy(o+_stateLength+offset, data, length * sizeof(StateSlot));
-        return insert((StateSlot*)o+_stateLength, newLength, isRoot);
+        o[1] &= 0x00FFFFFF;
 
-//        int* o = (int*)malloc(_stateLength*4*sizeof(int));
-//        int* n = o + _stateLength * 2;
-//        fprintf(stderr, "_stateLength: %zu\n",_stateLength);
-//        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), o, isRoot);
-//        memcpy(n+_stateLength, o+_stateLength, _stateLength * sizeof(int));
-//        memcpy(n+_stateLength+offset, data, delta.getLengthInBytes());
-//        auto seen = TreeDBSLLfop_incr_ref(_store, o, n, isRoot, true, &ref);
-//        free(o);
-//        return InsertedState(ref, seen == 0);
+        memcpy(n, o, sizeof(o));
+        memcpy(n+_stateLength+offset, data, length * sizeof(StateSlot));
 
-        //        tree_ref_t ref;
-//        auto seen = TreeDBSLLfopZeroExtend_ref(_store, state, length, true, &ref);
-//        return InsertedState(ref, seen > 0);
+        tree_ref_t ref;
+        auto seen = TreeDBSLLfop_incr_ref(_store, o, n, isRoot, true, &ref);
+        ref &= 0x000000FFFFFFFFFFULL;
+        ref |= newLength << 40;
+
+        return InsertedState(ref, seen == 0);
+
+
     }
 
     FullState* get(StateID id, bool isRoot) {
