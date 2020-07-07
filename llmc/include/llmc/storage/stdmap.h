@@ -179,7 +179,7 @@ public:
         memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
         memcpy(buffer+offset, data, length * sizeof(StateSlot));
         if(offset > old->getLength()) {
-            memset(buffer+length, 0, (offset - old->getLength()) * sizeof(StateSlot));
+            memset(buffer+old->getLength(), 0, (offset - old->getLength()) * sizeof(StateSlot));
         }
 
         return insert(buffer, newLength, isRoot);
@@ -209,8 +209,9 @@ public:
         FullState* s = get(id, isRoot);
         if(s) {
             memcpy(data, &s->getData()[offset], length * sizeof(StateSlot));
+            return true;
         }
-        return s != nullptr;
+        return false;
 //        read_only_lock lock(mtx);
 //        auto it = _storeID.find(id);
 //        if(it == _storeID.end()) {
