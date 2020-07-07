@@ -83,6 +83,8 @@ public:
     using MultiDelta = StorageInterface::MultiDelta;
     using StateID = StorageInterface::StateID;
     using InsertedState = StorageInterface::InsertedState;
+    using SparseOffset = StorageInterface::SparseOffset;
+
 //    using StateID = typename dtree<HASHSET>::Index;
 //    using InsertedState = typename dtree<HASHSET>::IndexInserted;
 
@@ -148,6 +150,38 @@ public:
 
     bool getPartial(StateID id, size_t offset, StateSlot* data, size_t length, bool isRoot) {
         return _store.getPartial(id.getData(), offset, length, data, isRoot);
+    }
+
+    bool getSparse(StateID id, uint32_t* buffer, uint32_t offsets, Projection offset, bool isRoot) {
+        return _store.getSparse(id.getData(), buffer, offsets, offset.getOffsets(), isRoot);
+    }
+
+    InsertedState deltaSparse(StateID id, uint32_t* delta, uint32_t offsets, Projection projection, bool isRoot) {
+        auto idx = _store.deltaSparse(id.getData(), delta, offsets, projection.getOffsets(), isRoot);
+        return InsertedState(idx.getState().getData(), idx.isInserted());
+    }
+
+    InsertedState deltaSparseToSingle(StateID id, uint32_t* delta, uint32_t offsets, Projection projection, bool isRoot) {
+        SparseOffset* offset = projection.getOffsets();
+        size_t startOffset = offset[0].getOffset();
+        size_t singleLen = offset[offsets-1].getOffset() - startOffset + offset[offsets-1].getLength();
+
+        StateSlot buffer[singleLen];
+
+        getPartial(id, startOffset, buffer, singleLen, isRoot);
+
+        SparseOffset* offsetEnd = offset + offsets;
+        StateSlot* v = buffer - startOffset;
+        while(offset < offsetEnd) {
+            uint32_t o = offset->getOffset();
+            uint32_t l = offset->getLength();
+            memcpy(v + o, delta, l * sizeof(StateSlot));
+            delta += l;
+            offset++;
+        }
+
+        return insert(id, startOffset, singleLen, buffer, isRoot);
+
     }
 
     void printStats() {

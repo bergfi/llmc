@@ -240,6 +240,72 @@ public:
         return true;
     }
 
+
+    bool getSparse(StateID stateID, uint32_t* buffer, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        assert(_stateLength);
+        size_t len = determineLength(stateID);
+        if(len != _stateLength || isRoot == false) {
+            return _varLengthStorage.getSparse(stateID, buffer, offsets, offset, isRoot);
+        }
+        tree_ref_t treeRef = getTreeRefFromID(stateID);
+        tree_t scratchPad = findScratchPadForState(treeRef);
+        if(scratchPad) {
+            SparseOffset* offsetEnd = offset + offsets;
+            while(offset < offsetEnd) {
+                uint32_t o = offset->getOffset();
+                uint32_t l = offset->getLength();
+                memcpy(buffer, (StateSlot*) scratchPad + _stateLength + o, l * sizeof(StateSlot));
+                buffer += l;
+                offset++;
+            }
+            return true;
+        }
+        int d[_stateLength*2];
+        TreeDBSLLget(_store, getTreeRefFromID(stateID), d);
+        SparseOffset* offsetEnd = offset + offsets;
+        while(offset < offsetEnd) {
+            uint32_t o = offset->getOffset();
+            uint32_t l = offset->getLength();
+            memcpy(buffer, (StateSlot*) d + _stateLength + o, l * sizeof(StateSlot));
+            buffer += l;
+            offset++;
+        }
+        return true;
+    }
+
+    InsertedState deltaSparse(StateID stateID, uint32_t* delta, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        assert(_stateLength);
+        size_t len = determineLength(stateID);
+        if(len != _stateLength || isRoot == false) {
+            return _varLengthStorage.deltaSparse(stateID, delta, offsets, offset, isRoot);
+        }
+
+        StateSlot v[_stateLength];
+        tree_ref_t treeRef = getTreeRefFromID(stateID);
+        tree_t prevScratchPad = findScratchPadForState(treeRef);
+        tree_t newScratchPad = newScratchPadForState();
+
+        if(prevScratchPad) {
+            memcpy(v, prevScratchPad + _stateLength, sizeof(int) * _stateLength);
+            if(prevScratchPad == newScratchPad) {
+                prevScratchPad = nullptr;
+            }
+        } else {
+            get(v, stateID, isRoot);
+        }
+
+        SparseOffset* offsetEnd = offset + offsets;
+        while(offset < offsetEnd) {
+            uint32_t o = offset->getOffset();
+            uint32_t l = offset->getLength();
+            memcpy((StateSlot*) v + o, delta, l * sizeof(StateSlot));
+            delta += l;
+            offset++;
+        }
+        auto seen = TreeDBSLLfop_incr(_store, (int*)v, prevScratchPad, newScratchPad, true);
+        return InsertedState(getIDFromTreeT(newScratchPad), seen == 0);
+    }
+
     void printStats() {
         auto stats = _varLengthStorage.getStatistics();
         std::cout << "Subcontainer uses " << stats.getBytesInUse()

@@ -223,6 +223,43 @@ public:
 //        return true;
     }
 
+    bool getSparse(StateID stateID, uint32_t* buffer, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        FullState* s = get(stateID, isRoot);
+        if(s) {
+            SparseOffset* offsetEnd = offset + offsets;
+            while(offset < offsetEnd) {
+                uint32_t o = offset->getOffset();
+                uint32_t l = offset->getLength();
+                memcpy(buffer, &s->getData()[o], l * sizeof(StateSlot));
+                buffer += l;
+                offset++;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    InsertedState deltaSparse(StateID stateID, uint32_t* delta, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        FullState* old = get(stateID, isRoot);
+        LLMC_DEBUG_ASSERT(old);
+        LLMC_DEBUG_ASSERT(old->getLength());
+        if(old) {
+            StateSlot buffer[old->getLength()];
+            memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
+            SparseOffset* offsetEnd = offset + offsets;
+            while(offset < offsetEnd) {
+                uint32_t o = offset->getOffset();
+                uint32_t l = offset->getLength();
+                memcpy(buffer + o, delta, l * sizeof(StateSlot));
+                delta += l;
+                offset++;
+            }
+            return insert(buffer, old->getLength(), isRoot);
+        }
+        return InsertedState();
+
+    }
+
     void printStats() {
     }
 

@@ -146,6 +146,47 @@ public:
     using StateTypeID = uint16_t;
     using FullState = FullStateData<StateSlot>;
 
+    /**
+     * 8b: length
+     * 24b: offset
+     */
+    struct SparseOffset {
+
+    public:
+        constexpr SparseOffset(uint32_t const& offset, uint32_t const& length): _data((offset << 8) | length) {
+            assert(length < 256);
+        }
+        constexpr SparseOffset(uint32_t const& data): _data(data) {}
+        constexpr SparseOffset(): _data(0) {}
+    public:
+
+        uint32_t getOffset() const {
+            return _data >> 8;
+        }
+
+        uint32_t getLength() const {
+            return _data & 0xFF;
+        }
+
+        uint32_t getOffsetPart() const {
+            return _data & 0xFF000000;
+        }
+
+        uint32_t _data;
+    };
+
+    struct Projection {
+    public:
+        constexpr Projection(SparseOffset* const& offsets): _offsets(offsets) {}
+    public:
+
+        SparseOffset* getOffsets() const {
+            return _offsets;
+        }
+
+        SparseOffset* _offsets;
+    };
+
     struct StateID64 {
     public:
         constexpr StateID64(): _data(0) {}

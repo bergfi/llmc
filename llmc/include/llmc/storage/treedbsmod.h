@@ -29,40 +29,12 @@ public:
         _store = TreeDBSLLcreate_dm(_stateLength, _hashmapRootScale, _hashmapRootScale - _hashmapDataScale, nullptr, 0, 0, 0);
         assert(_store);
         std::cout << "Storage initialized with state length " << _stateLength << std::endl;
-//        StateSlot* slots = new StateSlot[_stateLength];
-//        auto Z = insert(slots, _stateLength, true);
-//        _zeroRef = (tree_ref_t)Z.getState().getData();
     }
 
     using StateSlot = StorageInterface::StateSlot;
     using StateTypeID = StorageInterface::StateTypeID;
     using Delta = StorageInterface::Delta;
     using MultiDelta = StorageInterface::MultiDelta;
-
-//    struct StateID {
-//        StateID(int id) : _id(id) {};
-//        tree_ref_t _id;
-//    };
-
-//    class InsertedState {
-//    public:
-//
-//        InsertedState(): _stateID{0}, _inserted(0) {}
-//
-//        InsertedState(StateID stateId, bool inserted): _stateID(stateId), _inserted(inserted) {}
-//
-//        StateID getState() const {
-//            return _stateID;
-//        }
-//
-//        bool isInserted() const {
-//            return _inserted;
-//        }
-//    private:
-//        StateID _stateID;
-//        uint64_t _inserted;
-//    };
-//    using InsertedState = typename DTree::IndexInserted;
 
     StateID find(FullState* state) {
         tree_ref_t ref;
@@ -158,6 +130,51 @@ public:
         return true;
     }
 
+    bool getSparse(StateID stateID, uint32_t* buffer, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        int d[_stateLength*2];
+        if(stateID.getData() == 0xFFFFFFFFFFFFFFFFULL) abort();
+        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), d, isRoot);
+        SparseOffset* offsetEnd = offset + offsets;
+        while(offset < offsetEnd) {
+            uint32_t o = offset->getOffset();
+            uint32_t l = offset->getLength();
+            memcpy(buffer, (StateSlot*) d + _stateLength + o, l * sizeof(StateSlot));
+            buffer += l;
+            offset++;
+        }
+        return true;
+    }
+
+    InsertedState deltaSparse(StateID stateID, uint32_t* delta, uint32_t offsets, SparseOffset* offset, bool isRoot) {
+        size_t length = stateID.getData() >> 40;
+
+        int oldV[_stateLength*2];
+        int newV[_stateLength*2];
+        if(stateID.getData() == 0xFFFFFFFFFFFFFFFFULL) abort();
+        oldV[0] = 0;
+        TreeDBSLLget_isroot(_store, (tree_ref_t)stateID.getData(), oldV, isRoot);
+        oldV[1] &= 0x00FFFFFF;
+
+        memcpy(newV, oldV, sizeof(oldV));
+        SparseOffset* offsetEnd = offset + offsets;
+        int* v = newV + _stateLength;
+        while(offset < offsetEnd) {
+            uint32_t o = offset->getOffset();
+            uint32_t l = offset->getLength();
+            memcpy(v + o, delta, l * sizeof(StateSlot));
+            delta += l;
+            offset++;
+        }
+
+        tree_ref_t ref;
+        auto seen = TreeDBSLLfop_incr_ref(_store, oldV, newV, isRoot, true, &ref);
+        ref &= 0x000000FFFFFFFFFFULL;
+        ref |= length << 40;
+
+        return InsertedState(ref, seen == 0);
+
+    }
+
     void printStats() {
     }
 
@@ -226,7 +243,6 @@ private:
     size_t _stateLength;
     treedbs_ll_t _store;
     std::vector<size_t> zeroRoots;
-//    tree_ref_t _zeroRef;
     size_t _hashmapDataScale;
     size_t _hashmapRootScale;
 };
