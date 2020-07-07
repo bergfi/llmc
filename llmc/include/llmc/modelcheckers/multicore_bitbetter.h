@@ -11,6 +11,7 @@
 #include <libfrugi/Settings.h>
 #include <algorithm>
 #include <iomanip>
+#include<signal.h>
 
 using namespace libfrugi;
 
@@ -62,6 +63,8 @@ public:
     using updatable_lock = std::unique_lock<mutex_type>;
 public:
 
+    const uint64_t CENTRALQUEUEMASK = 511;
+
     using Storage = STORAGE;
     using StateSlot = typename Storage::StateSlot;
     using StateTypeID = typename Storage::StateTypeID;
@@ -72,6 +75,29 @@ public:
     using InsertedState = typename Storage::InsertedState;
     using Listener = LISTENER<MultiCoreModelChecker, Model>;
 
+    // TODO: remove this static part and move the signal handler to main
+    static MultiCoreModelChecker* single;
+
+    static void signalHandler(int sig) {
+        static uint64_t lastTime = 0;
+        uint64_t now = System::getCurrentTimeMillis();
+        if(now < lastTime + 2000) {
+            single->stop();
+            signal(SIGINT, SIG_DFL);
+        } else {
+            lastTime = now;
+            single->quickReport();
+            std::cout << "Press Ctrl-C again within 2s to stop the exploration" << std::endl;
+        }
+    }
+
+    void stop() {
+        quit = true;
+        for(auto& ctx: _workerContexts) {
+            ctx.quit = true;
+        }
+    }
+
 //    struct Context: public ModelChecker<Model, llmc::storage::StorageInterface>::template ContextImpl<MCI, Model> {
     struct Context: public VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker> {
         size_t localStates;
@@ -80,26 +106,36 @@ public:
         std::deque<StateID> stateQueueNew;
         SimpleAllocator<StateSlot> allocator;
 
-        bool first;
         double elapsedSeconds;
         size_t stateSlotsInsertedIntoStorage;
 
         std::unordered_map<size_t, size_t> _sizeHistogram;
+        System::Timer timer;
 
-        Context(MultiCoreModelChecker* mc, Model* model, size_t threadID): VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker>(mc, model), localStates(0), localTransitions(0), threadID(threadID), first(false), stateSlotsInsertedIntoStorage(0) {}
+        bool quit;
+
+        Context(MultiCoreModelChecker* mc, Model* model, size_t threadID): VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker>(mc, model), localStates(0), localTransitions(0), threadID(threadID), stateSlotsInsertedIntoStorage(0), quit(false) {}
     };
 
     MultiCoreModelChecker(Model* m): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _threads(0), _stats(1), _buildSizeHistogram(0) {
         _rootTypeID = 0;
+
+        // TODO: remove all this
+        single = this;
+        signal(SIGINT, signalHandler);
     }
 
     MultiCoreModelChecker(Model* m, Listener& listener): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _centralStateEnqueues(0), _centralStateDequeues(0), _threads(0), _stats(1), _listener(listener), _buildSizeHistogram(0) {
         _rootTypeID = 0;
+        single = this; //TODO: remove
+
+        // TODO: remove all this
+        single = this;
+        signal(SIGINT, signalHandler);
     }
 
     template<int limit>
     static void* workerThread(void* _ctx) {
-        System::Timer timer;
         Context& ctx = *(Context*)_ctx;
         MultiCoreModelChecker& mc = *ctx.getModelChecker();
         Model& model = *ctx.getModel();
@@ -118,20 +154,18 @@ public:
         tprintf("[%i] starting up thread %u... \n", tid);
         do {
             tprintf("[%i] getting new state from shared queue \n", tid);
-            if constexpr(limit == 0) {
-                ctx.first = true;
-            }
 //            size_t aff2 = sched_getcpu();
 //            if(aff != aff2) {
 //                printf("!!! Affinity changed %zu -> %zu\n", aff, aff2);
 //            }
-            ctx.elapsedSeconds += timer.getElapsedSeconds();
+            ctx.elapsedSeconds += ctx.timer.getElapsedSeconds();
             StateID current = mc.getNextQueuedState(&ctx);
-            timer.reset();
+            ctx.timer.reset();
             if(!current.exists()) break;
             tprintf("[%i] got %16zx \n", tid, current);
             do {
                 tprintf("[%i] current state: %16zx \n", tid, current);
+                if(__glibc_unlikely(ctx.quit)) break;
                 ctx.sourceState = current.getData();
                 ctx.allocator.clear();
                 model.getNextAll(ctx.sourceState, &ctx);
@@ -169,7 +203,8 @@ public:
         }
         _m->init(&ctx);
         StateID init = this->_m->getInitial(&ctx).getData();
-        System::Timer timer;
+
+        _timer.reset();
 
         stateQueueNew.push_back(init);
         _centralStateEnqueues.fetch_add(1, std::memory_order_relaxed);
@@ -229,7 +264,7 @@ public:
                 pthread_join(_workers[tid], nullptr);
             }
         }
-        auto elapsed = timer.getElapsedSeconds();
+        auto elapsed = _timer.getElapsedSeconds();
 
         size_t stateSlotsInsertedIntoStorage = 0;
         if(fireThreads) {
@@ -252,6 +287,7 @@ public:
             threadElapsed = elapsed;
         }
 
+        signal(SIGINT, SIG_DFL);
         printf("Stopped after %.2lfs\n", elapsed); fflush(stdout);
         printf("Found %zu states, explored %zu transitions\n", _states.load(std::memory_order_acquire), _transitions.load(std::memory_order_acquire));
         printf("States/s: %lf\n", ((double)_states.load(std::memory_order_acquire))/elapsed);
@@ -311,6 +347,25 @@ public:
 //            }
             std::cout << std::endl;
         }
+    }
+
+    void quickReport() {
+        auto elapsed = _timer.getElapsedSeconds();
+        double threadElapsed = 0.0f;
+        size_t states = _states.load(std::memory_order_acquire);
+        size_t transitions = _transitions.load(std::memory_order_acquire);
+        for(auto& ctx: _workerContexts) {
+            states += ctx.localStates;
+            transitions += ctx.localTransitions;
+            threadElapsed += ctx.timer.getElapsedSeconds();
+        }
+        printf("Running for %.2lfs\n", elapsed); fflush(stdout);
+        printf("Found %zu states, explored %zu transitions\n", states, transitions);
+        printf("States/s: %lf\n", ((double)states)/elapsed);
+        printf("Transitions/s: %lf\n", ((double)transitions)/elapsed);
+        printf("Thread efficiency: %3.3lf%%\n", 100 * threadElapsed / (_threads * elapsed));
+        printf("Central enqueues: %zu (%3.3lf%%)\n", _centralStateEnqueues.load(std::memory_order_relaxed), (double)100 * _centralStateEnqueues.load(std::memory_order_relaxed) / _states);
+        printf("Central dequeues: %zu (%3.3lf%%)\n", _centralStateDequeues.load(std::memory_order_relaxed), (double)100 * _centralStateDequeues.load(std::memory_order_relaxed) / _states);
     }
 
     StateID getNextQueuedState(Context* ctx) {
@@ -381,14 +436,13 @@ public:
             if(_buildSizeHistogram) {
                 ctx->_sizeHistogram[length]++;
             }
-            ctx->localStates++;
-            if (ctx->first) {
+            if((ctx->localStates & CENTRALQUEUEMASK) == 0) {
                 queueState(ctx, insertedState.getState().getData());
-                ctx->first = false;
             } else {
                 ctx->stateQueueNew.push_back(insertedState.getState());
                 tprintf("[%i] added to local queue: %16xu\n", ctx->threadID, insertedState.getState());
             }
+            ctx->localStates++;
             ctx->stateSlotsInsertedIntoStorage += _storage.determineLength(insertedState.getState());
         } else {
             tprintf("[%i] already visited: %16xu\n", ctx->threadID, insertedState.getState());
@@ -410,14 +464,13 @@ public:
             if(_buildSizeHistogram) {
                 ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
             }
-            ctx->localStates++;
-            if(ctx->first) {
+            if((ctx->localStates & CENTRALQUEUEMASK) == 0) {
                 queueState(ctx, insertedState.getState());
-                ctx->first = false;
-            } else{
+            } else {
                 ctx->stateQueueNew.push_back(insertedState.getState().getData());
                 tprintf("[%i] added to local queue: %16xu\n", ctx->threadID, insertedState.getState());
             }
+            ctx->localStates++;
             ctx->stateSlotsInsertedIntoStorage += _storage.determineLength(insertedState.getState());
         }
         ctx->localTransitions++;
@@ -432,14 +485,13 @@ public:
             if(_buildSizeHistogram) {
                 ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
             }
-            ctx->localStates++;
-            if(ctx->first) {
+            if((ctx->localStates & CENTRALQUEUEMASK) == 0) {
                 queueState(ctx, insertedState.getState());
-                ctx->first = false;
-            } else{
+            } else {
                 ctx->stateQueueNew.push_back(insertedState.getState().getData());
                 tprintf("[%i] added to local queue: %16xu\n", ctx->threadID, insertedState.getState());
             }
+            ctx->localStates++;
             ctx->stateSlotsInsertedIntoStorage += _storage.determineLength(insertedState.getState());
         }
         ctx->localTransitions++;
@@ -574,4 +626,8 @@ protected:
     std::vector<pthread_t> _workers;
     std::unordered_map<size_t, size_t> _sizeHistogram;
     bool _buildSizeHistogram;
+    System::Timer _timer;
 };
+
+template<typename Model, typename STORAGE, template<typename,typename> typename LISTENER>
+MultiCoreModelChecker<Model, STORAGE, LISTENER>* MultiCoreModelChecker<Model, STORAGE, LISTENER>::single;
