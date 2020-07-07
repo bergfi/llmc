@@ -258,7 +258,7 @@ public:
             case 9: {
                 NodePtr desired{proc.e.node, proc.e.next.count + 1};
                 Node* ptr = (Node*) proc.e.tail.ptr;
-                if(mem.cas(ctx, (MemOffset) &ptr->next, proc.e.next, desired)) {
+                if(!mem.cas(ctx, (MemOffset) &ptr->next, proc.e.next, desired)) {
                     proc.pc = 4;
                     label << "CAS FAILED, proc.e.next: {" << proc.e.next.ptr << ", " << proc.e.next.count << "}   ";
                 } else {
@@ -273,7 +273,7 @@ public:
             case 10: {
                 MSQ* msq = nullptr;
                 NodePtr desired{proc.e.next.ptr, proc.e.tail.count + 1};
-                if(mem.cas(ctx, (MemOffset) &msq->Tail, proc.e.tail, desired)) {
+                if(!mem.cas(ctx, (MemOffset) &msq->Tail, proc.e.tail, desired)) {
                     label << "CAS FAILED, proc.e.tail: {" << proc.e.tail.ptr << ", " << proc.e.tail.count << "}   ";
                 } else {
                     label << "CAS SUCCEEDED, mem[&msq->Tail(" << (MemOffset) &msq->Tail << ")] = {" << desired.ptr
@@ -285,7 +285,7 @@ public:
             case 11: {
                 MSQ* msq = nullptr;
                 NodePtr desired{proc.e.node, proc.e.tail.count + 1};
-                if(mem.cas(ctx, (MemOffset) &msq->Tail, proc.e.tail, desired)) {
+                if(!mem.cas(ctx, (MemOffset) &msq->Tail, proc.e.tail, desired)) {
                     label << "CAS FAILED, proc.e.tail:     {" << proc.e.tail.ptr << ", " << proc.e.tail.count << "}  ";
                 } else {
                     label << "CAS SUCCEEDED, mem[&msq->Tail(" << (MemOffset) &msq->Tail << ")] = {" << desired.ptr
@@ -359,7 +359,7 @@ public:
             } case 1010: {
                 MSQ* msq = nullptr;
                 NodePtr desired{proc.d.next.ptr, proc.d.tail.count + 1};
-                if(mem.cas(ctx, (MemOffset) &msq->Tail, proc.d.tail, desired)) {
+                if(!mem.cas(ctx, (MemOffset) &msq->Tail, proc.d.tail, desired)) {
                     label << "CAS FAILED, proc.d.tail: {" << proc.d.tail.ptr << ", " << proc.d.tail.count << "}   ";
                 } else {
                     label << "CAS SUCCEEDED, mem[&msq->Tail(" << (MemOffset) &msq->Tail << ")] = {" << desired.ptr << ", " << desired.count << "}   ";
@@ -369,7 +369,7 @@ public:
             } case 1011: {
                 MSQ* msq = nullptr;
                 NodePtr desired{proc.d.next.ptr, proc.d.head.count + 1};
-                if(mem.cas(ctx, (MemOffset) &msq->Head, proc.d.head, desired)) {
+                if(!mem.cas(ctx, (MemOffset) &msq->Head, proc.d.head, desired)) {
                     proc.pc = 1001;
                     label << "CAS FAILED, proc.d.tail: {" << proc.d.tail.ptr << ", " << proc.d.tail.count << "}   ";
                 } else {

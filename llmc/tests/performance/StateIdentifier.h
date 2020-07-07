@@ -159,12 +159,12 @@ struct StateIdentifier {
         // CAS failed
         if(memcmp(&localCopy, &expected, sizeof(T))) {
             memcpy(&expected, &localCopy, sizeof(T));
-            return true;
+            return false;
 
             // CAS succeeded
         } else {
             modifyBytes(ctx, ptr, sizeof(T), &desired);
-            return false;
+            return true;
         }
     }
 

@@ -124,3 +124,21 @@ target_link_libraries(model_hashmap -fPIC
         libtreedbs
         -latomic
         )
+
+add_executable(model_sortedlist
+        model_sortedlist.cpp
+        )
+
+set_property(TARGET model_sortedlist PROPERTY CXX_STANDARD 17)
+set_property(TARGET model_sortedlist PROPERTY CXX_STANDARD_REQUIRED ON)
+
+add_definitions(-fPIC)
+#add_dependencies(llmc libtreedbs libfrugi)
+
+#gtest_discover_tests(model_msq)
+target_link_libraries(model_sortedlist -fPIC
+        #        gtest gmock gtest_main
+        -lpthread -lm libfrugi -ldl
+        libtreedbs
+        -latomic
+        )
