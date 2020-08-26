@@ -223,6 +223,86 @@ public:
 //        return true;
     }
 
+    void getPartial(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        size_t length = 0;
+        for(size_t p = 0; p < projection.getProjections(); ++p) {
+            length += projection.getProjection(p).getLengthAndOffsets().getLength();
+        }
+        memset(buffer, 0, length * sizeof(uint32_t));
+    }
+    InsertedState delta(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        return InsertedState();
+    }
+
+    void multiConstruct(StateID id, bool isRoot, MultiProjection& projection, uint32_t level, uint32_t start, uint32_t end, uint32_t* buffer) {
+        uint32_t* bufferPosition = buffer;
+
+        auto projections = projection.getProjections();
+
+        uint64_t jump[projections];
+        uint64_t jumps = 0;
+
+        FullState* fsd = get(id, isRoot);
+
+        // Go through all projections to find the required data in the current tree
+        for(uint32_t pid = start; pid < end;) {
+            auto& p = projection.getProjection(pid);
+
+            LengthAndOffset lando = p.getLengthAndOffsets();
+            uint32_t len = lando.getLength();
+            uint32_t currentOffset = p.getOffset(level).getOffset();
+
+            // If the current projection projects to the current tree, get the data and write it to the buffer
+            if(level == lando.getOffsets() - 1) {
+                memcpy(bufferPosition, &fsd->getData()[currentOffset], len * sizeof(StateSlot));
+            }
+
+            // If the current projection projects to another tree, get the index of that tree in order to jump
+            else {
+                assert((currentOffset & 0x1) == 0);
+                while(projection.getProjection(pid).getOffset(level).getOffset() == currentOffset) {
+                    pid++;
+                    bufferPosition += projection.getProjection(pid).getLengthAndOffsets().getLength();
+                }
+
+                memcpy(&jump[jumps], &fsd->getData()[currentOffset], 2 * sizeof(StateSlot));
+                jumps++;
+            }
+            bufferPosition += len;
+            ++pid;
+        }
+
+        jumps = 0;
+
+        // Go through all projections to find the jumps and traverse them
+        bufferPosition = buffer;
+        for(uint32_t pid = start; pid < end;) {
+            auto& p = projection.getProjection(pid);
+
+            LengthAndOffset lando = p.getLengthAndOffsets();
+            uint32_t len = lando.getLength();
+
+            //
+            if(level < lando.getOffsets() - 1) {
+                uint32_t currentOffset = p.getOffset(level).getOffset();
+                assert((currentOffset & 0x1) == 0);
+
+                uint32_t pidEnd = pid + 1;
+                auto bufferPositionCurrent = bufferPosition;
+                while(projection.getProjection(pid).getOffset(level).getOffset() == currentOffset) {
+                    pidEnd++;
+                    bufferPosition += projection.getProjection(pid).getLengthAndOffsets().getLength();
+                }
+
+                multiConstruct(jump[jumps++], false, projection, level+1, pid, pidEnd, bufferPositionCurrent);
+                pid = pidEnd;
+            } else {
+                ++pid;
+            }
+            bufferPosition += len;
+        }
+    }
+
     bool getSparse(StateID stateID, uint32_t* buffer, uint32_t offsets, SparseOffset* offset, bool isRoot) {
         FullState* s = get(stateID, isRoot);
         if(s) {

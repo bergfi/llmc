@@ -152,6 +152,14 @@ public:
         return _store.getPartial(id.getData(), offset, length, data, isRoot);
     }
 
+    void getPartial(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        return _store.getPartial(id.getData(), *(typename decltype(_store)::MultiProjection*)&projection, isRoot, buffer);
+    }
+    InsertedState delta(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        auto idx =_store.delta(id.getData(), *(typename decltype(_store)::MultiProjection*)&projection, isRoot, buffer);
+        return InsertedState(idx.getState().getData(), idx.isInserted());
+    }
+
     bool getSparse(StateID id, uint32_t* buffer, uint32_t offsets, Projection offset, bool isRoot) {
         return _store.getSparse(id.getData(), buffer, offsets, offset.getOffsets(), isRoot);
     }

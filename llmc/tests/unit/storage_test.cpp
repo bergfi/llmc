@@ -32,8 +32,8 @@ public:
 
 using MyTypes = ::testing::Types< llmc::storage::TreeDBSStorage<llmc::storage::StdMap>
                                 , llmc::storage::TreeDBSStorageModified
-//                                , llmc::storage::StdMap
-//                                , llmc::storage::cchm
+                                , llmc::storage::StdMap
+                                , llmc::storage::cchm
                                 , llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>, HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>
                                 >;
 //using MyTypes = ::testing::Types<DTreeStorage<SeparateRootSingleHashSet<HashSet<RehasherExit>>>>;
@@ -787,7 +787,7 @@ TYPED_TEST(StorageTest, DeltaOne) {
     typename TypeParam::InsertedState stateIDs[5];
     typename TypeParam::StateID stateIDFound;
 
-    for(int length = 2; length < nrSlots; length++) {
+    for(size_t length = 2; length < nrSlots; length++) {
 
         // State 1
         stateIDs[1] = storage.insert(state1, length, true);
@@ -796,7 +796,7 @@ TYPED_TEST(StorageTest, DeltaOne) {
         EXPECT_TRUE(stateIDFound.exists());
         EXPECT_EQ(stateIDs[1].getState(), stateIDFound);
 
-        for(int offset = 0; offset < length; ++offset) {
+        for(size_t offset = 0; offset < length; ++offset) {
             typename TypeParam::StateSlot delta[] = {9};
             typename TypeParam::StateSlot state2correct[8];
 
@@ -915,7 +915,7 @@ TYPED_TEST(StorageTest, DeltaStressTestRoot) {
 //            printf("------------------------\n");
             auto newState = storage.insert(stateID.getState(), posA, length, delta, true);
             if(!newState.isInserted()) {
-                printf("Not inserted, using delta %u@%u\n", length, posA);
+                printf("Not inserted, using delta %zu@%zu\n", length, posA);
                 EXPECT_TRUE(false);
             }
 
@@ -980,7 +980,7 @@ TYPED_TEST(StorageTest, ExtendStressTestRoot) {
 
             auto newState = storage.insert(stateID.getState(), lengthOriginal, lengthDelta, delta, true);
             if(!newState.isInserted()) {
-                printf("Not inserted, using delta %u@%u\n", lengthDelta, lengthOriginal);
+                printf("Not inserted, using delta %zu@%zu\n", lengthDelta, lengthOriginal);
                 EXPECT_TRUE(false);
             }
 
@@ -990,7 +990,7 @@ TYPED_TEST(StorageTest, ExtendStressTestRoot) {
             bool exists = storage.get(state2, newState.getState(), true);
             EXPECT_TRUE(exists);
             if(memcmp(stateCorrect, state2, (lengthOriginal + lengthDelta) * sizeof(typename TypeParam::StateSlot))) {
-                printf("== Error: lengthOriginal=%u, lengthDelta=%u\n", lengthOriginal, lengthDelta);
+                printf("== Error: lengthOriginal=%zu, lengthDelta=%zu\n", lengthOriginal, lengthDelta);
                 printf("Original:");
                 for(size_t i = 0; i < lengthOriginal; ++i) {
                     printf(" %02x", state[i]);
@@ -1076,6 +1076,487 @@ TYPED_TEST(StorageTest, ExtendStressTestNonRoot) {
             }
         }
     }
+}
+
+TYPED_TEST(StorageTest, MultiProjection_getPartial_singleLevel) {
+    TypeParam storage;
+
+//    using SparseOffset = typename TypeParam::SparseOffset;
+
+    const size_t maxLength = 63;
+    typename TypeParam::StateSlot state[maxLength];
+    typename TypeParam::StateSlot state2[maxLength];
+    typename TypeParam::StateSlot stateCorrect[maxLength];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    char c = 'A';
+    char d = '0';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c, ++d) {
+        if(c == '[') c = 'A';
+        if(d == ':') d = '0';
+        state[i] = c;
+//        delta[i] = d;
+    }
+
+    auto stateID = storage.insert(state, sizeof(state)/sizeof(*state), true);
+    auto stateIDFound = storage.find(state, sizeof(state)/sizeof(*state), true);
+    EXPECT_TRUE(stateIDFound.exists());
+
+    for(uint32_t posA = 0; posA < maxLength; posA++) {
+        for(uint32_t posB = posA+1; posB <= maxLength; posB++) {
+            for(uint32_t posC = posB; posC <= maxLength; posC++) {
+                for(uint32_t posD = posC+1; posD <= maxLength; posD++) {
+
+                    uint32_t buffer[TypeParam::MultiProjection::getRequiredBufferSize32B(2,2)];
+                    typename TypeParam::MultiProjection& projection = TypeParam::MultiProjection::create(buffer, 2, 2);
+                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE, posB-posA, {posA});
+                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE, posD-posC, {posC});
+
+//                    printf("---------- %u %u %u %u\n", posA, posB, posC, posD);
+
+                    storage.getPartial(stateID.getState(), projection, true, state2);
+
+                    memcpy(stateCorrect          , state+posA, (posB-posA) * sizeof(typename TypeParam::StateSlot));
+                    memcpy(stateCorrect+posB-posA, state+posC, (posD-posC) * sizeof(typename TypeParam::StateSlot));
+
+                    if(memcmp(stateCorrect, state2, ((posB-posA) + (posD-posC)) * sizeof(typename TypeParam::StateSlot))) {
+                        printf("  Actual:");
+                        for(size_t i = 0; i < ((posB-posA) + (posD-posC)); ++i) {
+                            printf(" %02x", state2[i]);
+                        }
+                        printf("\n");
+                        printf("Expected:");
+                        for(size_t i = 0; i < ((posB-posA) + (posD-posC)); ++i) {
+                            printf(" %02x", stateCorrect[i]);
+                        }
+                        printf("\n");
+                        EXPECT_TRUE(false);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TYPED_TEST(StorageTest, MultiProjection_delta_singleLevel) {
+    TypeParam storage;
+
+//    using SparseOffset = typename TypeParam::SparseOffset;
+
+    const size_t maxLength = 64;
+    typename TypeParam::StateSlot state[maxLength];
+    typename TypeParam::StateSlot state2[maxLength];
+    typename TypeParam::StateSlot stateCorrect[maxLength];
+    typename TypeParam::StateSlot delta[maxLength];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    char c = 'A';
+    char d = '0';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c, ++d) {
+        if(c == '[') c = 'A';
+        if(d == ':') d = '0';
+        state[i] = c;
+        delta[i] = d;
+    }
+
+    auto stateID = storage.insert(state, sizeof(state)/sizeof(*state), false);
+    auto stateIDFound = storage.find(state, sizeof(state)/sizeof(*state), false);
+    EXPECT_TRUE(stateIDFound.exists());
+
+    for(uint32_t posA = 0; posA < maxLength; posA++) {
+        for(uint32_t posB = posA+1; posB <= maxLength; posB++) {
+            for(uint32_t posC = posB; posC <= maxLength; posC++) {
+                for(uint32_t posD = posC+1; posD <= maxLength; posD++) {
+
+                    uint32_t buffer[TypeParam::MultiProjection::getRequiredBufferSize32B(2,2)];
+                    typename TypeParam::MultiProjection& projection = TypeParam::MultiProjection::create(buffer, 2, 2);
+                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE, posB-posA, {posA});
+                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE, posD-posC, {posC});
+
+//                    printf("---------- %u %u %u %u\n", posA, posB, posC, posD);
+
+                    auto newStateID = storage.delta(stateID.getState(), projection, false, delta);
+
+                    memcpy(stateCorrect, state, maxLength * sizeof(typename TypeParam::StateSlot));
+                    memcpy(stateCorrect+posA, delta          , (posB-posA) * sizeof(typename TypeParam::StateSlot));
+                    memcpy(stateCorrect+posC, delta+posB-posA, (posD-posC) * sizeof(typename TypeParam::StateSlot));
+
+                    auto newStateIDFound = storage.find(stateCorrect, sizeof(stateCorrect)/sizeof(*stateCorrect), false);
+                    EXPECT_TRUE(newStateIDFound.exists());
+
+                    bool exists = storage.get(state2, newStateID.getState(), false);
+                    EXPECT_TRUE(exists);
+                    if(memcmp(stateCorrect, state2, (maxLength) * sizeof(typename TypeParam::StateSlot))) {
+                        printf("  Actual:");
+                        for(size_t i = 0; i < maxLength; ++i) {
+                            printf(" %02x", state2[i]);
+                        }
+                        printf("\n");
+                        printf("Expected:");
+                        for(size_t i = 0; i < maxLength; ++i) {
+                            printf(" %02x", stateCorrect[i]);
+                        }
+                        printf("\n");
+                        EXPECT_TRUE(false);
+                        abort();
+                    }
+                }
+            }
+        }
+    }
+}
+
+TYPED_TEST(StorageTest, MultiProjection_delta_twoLevel) {
+    TypeParam storage;
+
+//    using SparseOffset = typename TypeParam::SparseOffset;
+
+    const size_t maxLength = 32;
+    typename TypeParam::StateSlot state[maxLength];
+    typename TypeParam::StateSlot state2[maxLength];
+    typename TypeParam::StateSlot stateNew[maxLength];
+    typename TypeParam::StateSlot delta[maxLength*5];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    char c = 'A';
+    char d = '0';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c) {
+        if(c == '[') c = 'A';
+        state[i] = c;
+    }
+    for(size_t i = 0; i < sizeof(delta)/sizeof(*delta); ++i, ++d) {
+        if(d == ':') d = '0';
+        delta[i] = d;
+    }
+
+    auto originalStateID = storage.insert(state, sizeof(state)/sizeof(*state), false);
+    auto originalStateIDFound = storage.find(state, sizeof(state)/sizeof(*state), false);
+    EXPECT_TRUE(originalStateIDFound.exists());
+
+    for(uint32_t posRecursiveA = 0; posRecursiveA < maxLength; posRecursiveA+=2) {
+        for(uint32_t posRecursiveB = posRecursiveA + 2; posRecursiveB < maxLength; posRecursiveB+=2) {
+
+            memcpy(stateNew, state, sizeof(stateNew));
+            uint64_t idx = originalStateID.getState().getData();
+            stateNew[posRecursiveA] = idx;
+            stateNew[posRecursiveA+1] = idx >> 32;
+            stateNew[posRecursiveB] = idx;
+            stateNew[posRecursiveB+1] = idx >> 32;
+            auto stateID = storage.insert(stateNew, sizeof(stateNew)/sizeof(*stateNew), false);
+
+            for(uint32_t posA = posRecursiveB + 2; posA <= maxLength; posA++) {
+                for(uint32_t posB = posA; posB <= maxLength; posB++) {
+                    for(uint32_t posC = 0; posC <= maxLength; posC+=8) {
+                        for(uint32_t posD = posC + 8; posD <= maxLength; posD+=8) {
+                            for(uint32_t posE = 0; posE <= maxLength; posE+=8) {
+                                for(uint32_t posF = posE + 8; posF <= maxLength; posF+=8) {
+
+                                    uint32_t deltaPositionPosA = 0;
+                                    uint32_t deltaPositionPosC = 0;
+                                    uint32_t deltaPositionPosE = 0;
+
+
+                                    uint32_t buffer[TypeParam::MultiProjection::getRequiredBufferSize32B(5, 3)];
+                                    typename TypeParam::MultiProjection& projection = TypeParam::MultiProjection::create(
+                                            buffer,
+                                            5, 3);
+//                                    printf("----------");
+//                                    printf(" [%u:%u](%u--%u)", posRecursiveA, posRecursiveA+2, posC, posD);
+//                                    printf(" [%u:%u](%u--%u)", posRecursiveB, posRecursiveB+2, posE, posF);
+//                                    printf(" <--%u:%u-->", posA, posB);
+//                                    printf("\n");
+                                    uint32_t deltaPosition = 0;
+                                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                             posD - posC,
+                                                             {posRecursiveA, posC});
+                                    deltaPositionPosC = deltaPosition;
+                                    deltaPosition += posD - posC;
+                                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                             posF - posE,
+                                                             {posRecursiveB, posE});
+                                    deltaPositionPosE = deltaPosition;
+                                    deltaPosition += posF - posE;
+                                    if(posA < posB) {
+                                        projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                                 posB - posA,
+                                                                 {posA});
+                                        deltaPositionPosA = deltaPosition;
+                                    }
+
+                                    auto newStateID = storage.delta(stateID.getState(), projection, false, delta);
+
+                                    bool exists = storage.get(state2, newStateID.getState(), false);
+                                    EXPECT_TRUE(exists);
+
+                                    bool wrong = false;
+
+                                    if(posA < posB) {
+                                        wrong = wrong || memcmp(state2+posA, delta+deltaPositionPosA, (posB-posA) * sizeof(*state));
+                                    }
+
+                                    if(wrong) {
+                                        printf("  Actual:");
+                                        for(size_t i = 0; i < maxLength; ++i) {
+                                            printf(" %02x", state2[i]);
+                                        }
+                                        printf("\n");
+                                        printf("Expected:");
+                                        for(size_t i = 0; i < maxLength; ++i) {
+                                            printf(" %02x", stateNew[i]);
+                                        }
+                                        printf("\n");
+                                        EXPECT_TRUE(false);
+                                        abort();
+                                    }
+
+                                    uint64_t indexA = state2[posRecursiveA+1];
+                                    indexA <<= 32;
+                                    indexA |= state2[posRecursiveA];
+                                    uint64_t indexB = state2[posRecursiveB+1];
+                                    indexB <<= 32;
+                                    indexB |= state2[posRecursiveB];
+
+                                    {
+                                        bool existsA = storage.get(state2, indexA, false);
+                                        EXPECT_TRUE(existsA);
+                                        typename TypeParam::StateSlot stateCorrect[maxLength];
+                                        memcpy(stateCorrect, state, sizeof(state));
+                                        memcpy(stateCorrect+posC, delta+deltaPositionPosC, (posD-posC)*sizeof(*state));
+                                        if(memcmp(stateCorrect, state2, sizeof(state2))) {
+                                            printf("  Actual:");
+                                            for(size_t i = 0; i < maxLength; ++i) {
+                                                printf(" %02x", state2[i]);
+                                            }
+                                            printf("\n");
+                                            printf("Expected:");
+                                            for(size_t i = 0; i < maxLength; ++i) {
+                                                printf(" %02x", stateCorrect[i]);
+                                            }
+                                            printf("\n");
+                                            EXPECT_TRUE(false);
+                                            abort();
+                                        }
+                                    }
+                                    {
+                                        bool existsB = storage.get(state2, indexB, false);
+                                        EXPECT_TRUE(existsB);
+                                        typename TypeParam::StateSlot stateCorrect[maxLength];
+                                        memcpy(stateCorrect, state, sizeof(state));
+                                        memcpy(stateCorrect+posE, delta+deltaPositionPosE, (posF-posE)*sizeof(*state));
+                                        if(memcmp(stateCorrect, state2, sizeof(state2))) {
+                                            printf("  Actual:");
+                                            for(size_t i = 0; i < maxLength; ++i) {
+                                                printf(" %02x", state2[i]);
+                                            }
+                                            printf("\n");
+                                            printf("Expected:");
+                                            for(size_t i = 0; i < maxLength; ++i) {
+                                                printf(" %02x", stateCorrect[i]);
+                                            }
+                                            printf("\n");
+                                            EXPECT_TRUE(false);
+                                            abort();
+                                        }
+                                    }
+
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TYPED_TEST(StorageTest, MultiProjection_delta_twoLevel3root) {
+    TypeParam storage;
+
+//    using SparseOffset = typename TypeParam::SparseOffset;
+
+    const size_t maxLength = 32;
+    typename TypeParam::StateSlot state[maxLength];
+    typename TypeParam::StateSlot state2[maxLength];
+    typename TypeParam::StateSlot stateNew[maxLength];
+    typename TypeParam::StateSlot delta[maxLength*5];
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(maxLength);
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    char c = 'A';
+    char d = '0';
+
+    for(size_t i = 0; i < maxLength; ++i, ++c) {
+        if(c == '[') c = 'A';
+        state[i] = c;
+    }
+    for(size_t i = 0; i < sizeof(delta)/sizeof(*delta); ++i, ++d) {
+        if(d == ':') d = '0';
+        delta[i] = d;
+    }
+
+    auto originalStateID = storage.insert(state, sizeof(state)/sizeof(*state), false);
+    auto originalStateIDFound = storage.find(state, sizeof(state)/sizeof(*state), false);
+    EXPECT_TRUE(originalStateIDFound.exists());
+
+    constexpr bool printThings = false;
+
+    for(uint32_t posRecursiveA = 0; posRecursiveA < maxLength; posRecursiveA+=2) {
+        for(uint32_t posRecursiveB = posRecursiveA + 2; posRecursiveB < maxLength; posRecursiveB+=2) {
+
+            memcpy(stateNew, state, sizeof(stateNew));
+            uint64_t idx = originalStateID.getState().getData();
+            stateNew[posRecursiveA] = idx;
+            stateNew[posRecursiveA+1] = idx >> 32;
+            stateNew[posRecursiveB] = idx;
+            stateNew[posRecursiveB+1] = idx >> 32;
+            auto stateID = storage.insert(stateNew, sizeof(stateNew)/sizeof(*stateNew), false);
+
+            for(uint32_t posA = 0; posA <= posRecursiveA; posA++) {
+                for(uint32_t posB = posA; posB <= posRecursiveA; posB++) {
+                    for(uint32_t posC = posRecursiveA+2; posC <= posRecursiveB; posC++) {
+                        for(uint32_t posD = posC; posD <= posRecursiveB; posD++) {
+                            for(uint32_t posE = posRecursiveB+2; posE <= maxLength; posE++) {
+                                for(uint32_t posF = posE; posF <= maxLength; posF++) {
+
+//                                    uint32_t deltaPositionPosA = 0;
+//                                    uint32_t deltaPositionPosC = 0;
+//                                    uint32_t deltaPositionPosE = 0;
+
+                                    typename TypeParam::StateSlot stateCorrect[maxLength];
+                                    memcpy(stateCorrect, state, sizeof(state));
+
+                                    uint32_t buffer[TypeParam::MultiProjection::getRequiredBufferSize32B(5, 3)];
+                                    typename TypeParam::MultiProjection& projection = TypeParam::MultiProjection::create(
+                                            buffer,
+                                            5, 3);
+                                    if constexpr(printThings) printf("----------");
+                                    uint32_t deltaPosition = 0;
+                                    if(posA < posB) {
+                                        if constexpr(printThings) printf(" <--%u:%u-->", posA, posB);
+                                        memcpy(stateCorrect+posA, delta+deltaPosition, (posB-posA)*sizeof(*state));
+                                        projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                                 posB - posA,
+                                                                 {posA});
+//                                        deltaPositionPosA = deltaPosition;
+                                        deltaPosition += posB - posA;
+                                    }
+                                    if constexpr(printThings) printf(" [%u:%u](--)", posRecursiveA, posRecursiveA+2);
+                                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                             2,
+                                                             {posRecursiveA, 0});
+                                    deltaPosition += 2;
+                                    if(posC < posD) {
+                                        if constexpr(printThings) printf(" <--%u:%u-->", posC, posD);
+                                        memcpy(stateCorrect+posC, delta+deltaPosition, (posD-posC)*sizeof(*state));
+                                        projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                                 posD - posC,
+                                                                 {posC});
+//                                        deltaPositionPosC = deltaPosition;
+                                        deltaPosition += posD - posC;
+                                    }
+                                    if constexpr(printThings) printf(" [%u:%u](--)", posRecursiveB, posRecursiveB+2);
+                                    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                             4,
+                                                             {posRecursiveB, 0});
+                                    deltaPosition += 4;
+                                    if(posE < posF) {
+                                        if constexpr(printThings) printf(" <--%u:%u-->", posE, posF);
+                                        memcpy(stateCorrect+posE, delta+deltaPosition, (posF-posE)*sizeof(*state));
+                                        projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE,
+                                                                 posF - posE,
+                                                                 {posE});
+//                                        deltaPositionPosE = deltaPosition;
+                                        deltaPosition += posF - posE;
+                                    }
+                                    if constexpr(printThings) printf("\n");
+
+                                    auto newStateID = storage.delta(stateID.getState(), projection, false, delta);
+
+                                    bool exists = storage.get(state2, newStateID.getState(), false);
+                                    EXPECT_TRUE(exists);
+
+                                    stateCorrect[posRecursiveA] = state2[posRecursiveA];
+                                    stateCorrect[posRecursiveA+1] = state2[posRecursiveA+1];
+                                    stateCorrect[posRecursiveB] = state2[posRecursiveB];
+                                    stateCorrect[posRecursiveB+1] = state2[posRecursiveB+1];
+
+                                    if(memcmp(stateCorrect, state2, sizeof(state2))) {
+                                        printf("  Actual:");
+                                        for(size_t i = 0; i < maxLength; ++i) {
+                                            printf(" %02x", state2[i]);
+                                        }
+                                        printf("\n");
+                                        printf("Expected:");
+                                        for(size_t i = 0; i < maxLength; ++i) {
+                                            printf(" %02x", stateCorrect[i]);
+                                        }
+                                        printf("\n");
+                                        EXPECT_TRUE(false);
+                                        abort();
+                                    }
+
+                                    typename TypeParam::StateSlot readBackDelta[maxLength*5];
+                                    storage.getPartial(newStateID.getState(), projection, false, readBackDelta);
+
+                                    if(memcmp(delta, readBackDelta, deltaPosition * sizeof(*state2))) {
+                                        printf("  Actual:");
+                                        for(size_t i = 0; i < deltaPosition; ++i) {
+                                            printf(" %02x", readBackDelta[i]);
+                                        }
+                                        printf("\n");
+                                        printf("Expected:");
+                                        for(size_t i = 0; i < deltaPosition; ++i) {
+                                            printf(" %02x", delta[i]);
+                                        }
+                                        printf("\n");
+                                        EXPECT_TRUE(false);
+                                        abort();
+                                    }
+
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    auto stats = storage.getStatistics();
+    printf("_bytesReserved = %zu\n", stats._bytesReserved);
+    printf("_bytesInUse = %zu\n", stats._bytesInUse);
+    printf("_bytesMaximum = %zu\n", stats._bytesMaximum);
+    printf("_elements = %zu\n", stats._elements);
+
 }
 
 TYPED_TEST(StorageTest, SparseGetStressTestRoot) {
@@ -1625,8 +2106,8 @@ TYPED_TEST(StorageTest, SparseGetAndModifyStressTest3DSmallRoot) {
 
     const size_t maxLength = 2048;
     typename TypeParam::StateSlot state[maxLength];
-    typename TypeParam::StateSlot state2[maxLength];
-    typename TypeParam::StateSlot stateCorrect[maxLength];
+//    typename TypeParam::StateSlot state2[maxLength];
+//    typename TypeParam::StateSlot stateCorrect[maxLength];
     typename TypeParam::StateSlot buffer[maxLength];
 
     if constexpr(TypeParam::stateHasFixedLength()) {
@@ -1671,7 +2152,7 @@ TYPED_TEST(StorageTest, SparseGetAndModifyStressTest3DSmallRoot) {
                                 buffer[i]++;
                             }
 
-                            auto newStateID = storage.deltaSparse(stateID.getState(), buffer, 3, projection1, true);
+                            storage.deltaSparse(stateID.getState(), buffer, 3, projection1, true);
 
                         }
                     }
@@ -1684,12 +2165,12 @@ TYPED_TEST(StorageTest, SparseGetAndModifyStressTest3DSmallRoot) {
 TYPED_TEST(StorageTest, GetAndModifyStressTest3DSmallRoot) {
     TypeParam storage;
 
-    using SparseOffset = typename TypeParam::SparseOffset;
+//    using SparseOffset = typename TypeParam::SparseOffset;
 
     const size_t maxLength = 2048;
     typename TypeParam::StateSlot state[maxLength];
-    typename TypeParam::StateSlot state2[maxLength];
-    typename TypeParam::StateSlot stateCorrect[maxLength];
+//    typename TypeParam::StateSlot state2[maxLength];
+//    typename TypeParam::StateSlot stateCorrect[maxLength];
     typename TypeParam::StateSlot buffer[maxLength];
 
     if constexpr(TypeParam::stateHasFixedLength()) {
@@ -1736,7 +2217,7 @@ TYPED_TEST(StorageTest, GetAndModifyStressTest3DSmallRoot) {
                                 buffer[i]++;
                             }
 
-                            auto newStateID = storage.insert(stateID.getState(), posA, bufferLength, buffer, true);
+                            storage.insert(stateID.getState(), posA, bufferLength, buffer, true);
 
                         }
                     }
@@ -1793,9 +2274,9 @@ TYPED_TEST(StorageTest, PartialGet) {
         storage.thread_init();
     }
 
-    stateID = storage.insert(state1, 8, true);
+    stateID = storage.insert(state1, sizeof(state1)/sizeof(*state1), true);
     EXPECT_TRUE(stateID.isInserted());
-    stateIDFound = storage.find(state1, 8, true);
+    stateIDFound = storage.find(state1, sizeof(state1)/sizeof(*state1), true);
     EXPECT_TRUE(stateIDFound.exists());
     EXPECT_EQ(stateID.getState(), stateIDFound);
 
@@ -1804,6 +2285,40 @@ TYPED_TEST(StorageTest, PartialGet) {
     storage.getPartial(stateID.getState(), 4, partial, 2, true);
     EXPECT_EQ(partial[0], state1[4]);
     EXPECT_EQ(partial[1], state1[5]);
+}
+
+TYPED_TEST(StorageTest, PartialGetMultiProjection) {
+    TypeParam storage;
+
+    typename TypeParam::StateSlot state1[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    typename TypeParam::InsertedState stateID;
+    typename TypeParam::StateID stateIDFound;
+
+    if constexpr(TypeParam::stateHasFixedLength()) {
+        storage.setMaxStateLength(sizeof(state1)/sizeof(*state1));
+    }
+    storage.init();
+    if constexpr(TypeParam::needsThreadInit()) {
+        storage.thread_init();
+    }
+
+    stateID = storage.insert(state1, sizeof(state1)/sizeof(*state1), true);
+    EXPECT_TRUE(stateID.isInserted());
+    stateIDFound = storage.find(state1, sizeof(state1)/sizeof(*state1), true);
+    EXPECT_TRUE(stateIDFound.exists());
+    EXPECT_EQ(stateID.getState(), stateIDFound);
+
+    typename TypeParam::StateSlot partial[2] = {0};
+
+    uint32_t buffer[TypeParam::MultiProjection::getRequiredBufferSize32B(2,2)];
+    typename TypeParam::MultiProjection& projection = TypeParam::MultiProjection::create(buffer, 2, 2);
+    projection.addProjection(TypeParam::MultiOffset::Options::READ_WRITE, 2, {1});
+
+    printf("partial = %p\n", partial);
+
+    storage.getPartial(stateID.getState(), projection, true, partial);
+    EXPECT_EQ(partial[0], state1[1]);
+    EXPECT_EQ(partial[1], state1[2]);
 }
 
 TYPED_TEST(StorageTest, PartialGetOfVector2) {

@@ -175,6 +175,82 @@ public:
         uint32_t _data;
     };
 
+    struct MultiOffset {
+
+    public:
+        enum class Options {
+            NONE,
+            READ,
+            WRITE,
+            READ_WRITE
+        };
+    public:
+        __attribute__((always_inline))
+        constexpr MultiOffset(uint32_t const& offset, uint32_t const& options): _data(offset | (options << 24)) {}
+
+        __attribute__((always_inline))
+        constexpr MultiOffset(uint32_t const& data): _data(data) {}
+
+        __attribute__((always_inline))
+        constexpr MultiOffset(): _data(0) {}
+    public:
+
+        __attribute__((always_inline))
+        void init(uint32_t const& offset, Options const& options) {
+            _data = offset | ((uint32_t)options << 24);
+        }
+
+        __attribute__((always_inline))
+        uint32_t getOffset() const {
+            return _data & 0xFFFFFF;
+        }
+
+        __attribute__((always_inline))
+        Options getOptions() const {
+            return (Options)(_data >> 24);
+        }
+
+        __attribute__((always_inline))
+        bool operator<(SparseOffset const& other) {
+            return _data < other._data;
+        }
+
+        __attribute__((always_inline))
+        uint32_t getData() const {
+            return _data;
+        }
+
+        uint32_t _data;
+    };
+
+    struct LengthAndOffset: private MultiOffset {
+    public:
+        __attribute__((always_inline))
+        constexpr LengthAndOffset(uint32_t const& length, uint32_t const& offsets): MultiOffset(length, offsets) {}
+
+        __attribute__((always_inline))
+        constexpr LengthAndOffset(uint32_t const& data): MultiOffset(data) {}
+
+        __attribute__((always_inline))
+        constexpr LengthAndOffset(): MultiOffset() {}
+    public:
+
+        __attribute__((always_inline))
+        void init(uint32_t const& length, uint32_t const& offsets) {
+            this->_data = length | (offsets << 24);
+        }
+
+        __attribute__((always_inline))
+        uint32_t getLength() const {
+            return this->_data & 0xFFFFFF;
+        }
+
+        __attribute__((always_inline))
+        uint32_t getOffsets() const {
+            return this->_data >> 24;
+        }
+    };
+
     struct Projection {
     public:
         constexpr Projection(SparseOffset* const& offsets): _offsets(offsets) {}
@@ -185,6 +261,83 @@ public:
         }
 
         SparseOffset* _offsets;
+    };
+
+    struct MultiProjection {
+    public:
+
+        struct SingleProjection {
+
+            SingleProjection() {}
+
+            SingleProjection(MultiOffset::Options options, uint32_t length, std::initializer_list<uint32_t> offsets) {
+                int i = 0;
+                for(auto& o: offsets) {
+                    _data[i++].init(o, options);
+                }
+                lando.init(length, i); // TODO: determine if we want nr of offsets or stride
+            }
+
+            typename MultiOffset::Options getOptions() const {
+                return _data[0].getOptions();
+            }
+
+            LengthAndOffset getLengthAndOffsets() const {
+                return lando;
+            }
+
+            MultiOffset* getOffsets() {
+                return _data;
+            }
+
+            MultiOffset& getOffset(uint32_t level) {
+                return _data[level];
+            }
+
+            uint32_t getLength(uint32_t level) const {
+                LengthAndOffset& lando = ((LengthAndOffset&)_data[0]);
+                return level < lando.getOffsets() - 1 ? 2 : lando.getLength();
+            }
+
+            LengthAndOffset lando;
+            MultiOffset _data[];
+        };
+    public:
+
+        static size_t getRequiredBufferSize32B(uint32_t maxProjections, uint32_t maxDepth) {
+            return sizeof(MultiProjection)/sizeof(uint32_t) + maxProjections * maxDepth;
+        }
+
+        static MultiProjection& create(uint32_t* buffer, uint32_t maxProjections, uint32_t maxDepth) {
+            MultiProjection* projection = (MultiProjection*)buffer;
+            projection->projections = 0;
+            projection->maxProjections = maxProjections;
+            projection->maxDepth = maxDepth;
+            return *projection;
+        }
+
+        size_t getProjections() const {
+            return projections;
+        }
+
+        size_t getStride() const {
+            return maxDepth + 1;
+        }
+
+        SingleProjection& getProjection(size_t idx) {
+            return *(SingleProjection*)&_projections[idx * getStride()];
+        }
+
+        void addProjection(MultiOffset::Options options, uint32_t length, std::initializer_list<uint32_t> offsets) {
+            assert(projections < maxProjections);
+            new(&getProjection(projections)) SingleProjection(options, length, offsets);
+            projections++;
+        }
+
+        uint32_t projections;
+        uint32_t maxProjections;
+        uint32_t maxDepth;
+        uint32_t _projections[];
     };
 
     struct StateID64 {

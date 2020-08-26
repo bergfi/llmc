@@ -198,6 +198,17 @@ public:
         return s != nullptr;
     }
 
+    void getPartial(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        size_t length = 0;
+        for(size_t p = 0; p < projection.getProjections(); ++p) {
+            length += projection.getProjection(p).getLengthAndOffsets().getLength();
+        }
+        memset(buffer, 0, length * sizeof(uint32_t));
+    }
+    InsertedState delta(StateID idx, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        return InsertedState();
+    }
+
     bool getSparse(StateID stateID, uint32_t* buffer, uint32_t offsets, SparseOffset* offset, bool isRoot) {
         FullState* s = get(stateID, isRoot);
         if(s) {
