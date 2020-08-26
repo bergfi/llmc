@@ -249,7 +249,7 @@ public:
     virtual void pins_chunk_getpartial64_unaligned(void* ctx_, int type, uint64_t idx, int offset, int* data, int len) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
-        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+//        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
         size_t nrSlots = (offset_remainder + len + (sizeof(llmc::storage::StorageInterface::StateSlot) - 1)) / (sizeof(llmc::storage::StorageInterface::StateSlot));
         StateSlot tempSlots[nrSlots];
         ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
@@ -266,7 +266,7 @@ public:
 //            printArray((char*)data, len);
 //            printf("\n");
 
-            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
+//            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
             size_t deltaOffset = offset / sizeof(llmc::storage::StorageInterface::StateSlot);
             size_t deltaLength = len / sizeof(llmc::storage::StorageInterface::StateSlot);
             auto s = ctx->mc->newSubState(ctx, idx, deltaOffset, deltaLength, (llmc::storage::StorageInterface::StateSlot*)data);
@@ -291,7 +291,7 @@ public:
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
 
         size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
-        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+//        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
         size_t nrSlots = (offset_remainder + len + (sizeof(llmc::storage::StorageInterface::StateSlot) - 1)) / (sizeof(llmc::storage::StorageInterface::StateSlot));
         StateSlot tempSlots[nrSlots];
         ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), tempSlots, nrSlots);
@@ -360,7 +360,7 @@ public:
             // TODO: There's some shortcuts here: labels are currently still in the PINS format, meaning 32bit.
             // So as a shortcut, we assume the label chunkID to be in the first 2 32bit slots
             // TODO: We also assume labels are substates, but that seems a correct assumption
-            auto labelIndex = 0;//ctx->getModel<PINSModel>()->_labelIndex;
+            size_t labelIndex = 0;//ctx->getModel<PINSModel>()->_labelIndex;
             if(labelIndex < ctx->getModel<PINSModel>()->_ltsType->edge_label.size()) {
                 auto fsd = ctx->mc->getSubState(ctx, *(uint64_t*)tinfo->labels);
                 if(fsd) {

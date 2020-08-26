@@ -97,7 +97,7 @@ public:
             if (allSatisfied)
                 printf("All philosopher are satisfied\n");
             else
-                printf("Philosopher %d is still hungry: it ate %u (out of %u) times\n", idx, state, Philo::MAX_EATS);
+                printf("Philosopher %d is still hungry: it ate %u (out of %zu) times\n", idx, state, Philo::MAX_EATS);
         }
 
         return r;
@@ -140,8 +140,8 @@ public:
         }
         case 1 : {
             label << "trying to pick left fork... ";
-            Fork expected = 0;
-            const Fork desired = 1;
+//            Fork expected = 0;
+//            const Fork desired = 1;
             if (p.fork == 0) {
                 label << "succeeded ";
                 p.fork = 1;
@@ -228,7 +228,7 @@ public:
             p.id = i;
             p.pc = p.state = p.fork = 0;  // shorturl.at/fryDP
             sv.philo[i].init(ctx, &p, sizeof(Philo)/4);
-            printf("Uploading philosopher #%d: %zx\n", i, sv.philo[i].data);
+            printf("Uploading philosopher #%zu: %zx\n", i, sv.philo[i].data);
         }
 
         ModelStateIdentifier init;

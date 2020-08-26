@@ -98,7 +98,7 @@ public:
 
     void writeTransition(StateID const& from, StateID const& to, TransitionInfo tInfo) {
         updatable_lock lock(mtx);
-        TransitionInfo const& t = tInfo;
+//        TransitionInfo const& t = tInfo;
 
         size_t start_pos = 0;
         std::string escape = "\"";

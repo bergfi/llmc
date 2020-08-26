@@ -99,7 +99,7 @@ public:
                 uint32_t procState = 0;
                 sv.proc[idx].readBytes(ctx, offsetof(Proc, pc), sizeof(Proc::pc), &procState);
                 if(procState != 0) {
-                    printf("Proc not finished: %u\n", idx);
+                    printf("Proc not finished: %zu\n", idx);
                     allOK = false;
                 }
             }
@@ -121,14 +121,14 @@ public:
                     size_t id = *str - 'A';
                     if(id < sv.procs) {
                         if(found[id]) {
-                            printf("Double found %i\n", id);
+                            printf("Double found %zu\n", id);
                             allOK = false;
                         } else {
                             foundTotal++;
                             found[id] = true;
                         }
                     } else {
-                        printf("Found an id that is too high %i\n", id);
+                        printf("Found an id that is too high %zu\n", id);
                         allOK = false;
                     }
                 }
@@ -277,7 +277,7 @@ public:
 
         ModelStateIdentifier init;
         init.init(ctx, svmem, initSize / 4, true);
-        printf("Uploading initial state %zx %u %u length: %zu, first proc: %u\n", init.data, sv.state, sv.procs, initSize / 4, sv.proc[0]);
+        printf("Uploading initial state %zx %u %u length: %zu, first proc: %zu\n", init.data, sv.state, sv.procs, initSize / 4, sv.proc[0].data);
         return init.data;
     }
 

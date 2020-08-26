@@ -122,9 +122,9 @@ public:
             StateSlot memory[sv.memory.getLength()];
             sv.memory.pull(ctx, memory);
             MSQ* msq = (MSQ*)memory;
-            Node* n1 = (Node*)(((char*)memory) + sizeof(*msq));
-            Node* n2 = (Node*)(((char*)memory) + sizeof(*msq) + sizeof(Node));
-            Node* n3 = (Node*)(((char*)memory) + sizeof(*msq) + sizeof(Node) + sizeof(Node));
+//            Node* n1 = (Node*)(((char*)memory) + sizeof(*msq));
+//            Node* n2 = (Node*)(((char*)memory) + sizeof(*msq) + sizeof(Node));
+//            Node* n3 = (Node*)(((char*)memory) + sizeof(*msq) + sizeof(Node) + sizeof(Node));
 //            printf("msq.Head: {%zu, %zu}\n", msq->Head.ptr, msq->Head.count);
 //            printf("msq.Tail: {%zu, %zu}\n", msq->Tail.ptr, msq->Tail.count);
 //            printf("n1: {%zu, %zu, %zu} @ %zu\n", n1->next.ptr, n1->next.count, n1->data, (char*)n1 - (char*)memory);

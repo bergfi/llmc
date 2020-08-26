@@ -20,7 +20,7 @@ public:
         auto state = ctx->getModelChecker()->getState(ctx, s);
         assert(state);
 //        fprintf(stderr, "LLVMModel::getNextAll %u\n", state->getLength());
-        StateSlot d[state->getLength()];
+//        StateSlot d[state->getLength()];
 
         size_t buffer[3];
 

@@ -270,7 +270,7 @@ public:
         auto fsd = getSubState(ctx_, insertedState.getState());
         _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 
-        auto fsdOld = getSubState(ctx_, insertedState.getState());
+//        auto fsdOld = getSubState(ctx_, insertedState.getState());
 //        printf("[CAM64] before: %zx %u, delta: %u %u, after: %zx %u\n", stateID, fsdOld->getLength(), delta.getOffset(), delta.getLength(), insertedState.getState(), fsd->getLength());
 
 //        printf("newSubState: %zx\n", insertedState.getState());
@@ -284,7 +284,7 @@ public:
         auto fsd = getSubState(ctx_, insertedState.getState());
         _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 
-        auto fsdOld = getSubState(ctx_, insertedState.getState());
+//        auto fsdOld = getSubState(ctx_, insertedState.getState());
 //        printf("[CAM64] before: %zx %u, delta: %u %u, after: %zx %u\n", stateID, fsdOld->getLength(), delta.getOffset(), delta.getLength(), insertedState.getState(), fsd->getLength());
 
 //        printf("newSubState: %zx\n", insertedState.getState());

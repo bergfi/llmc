@@ -60,7 +60,7 @@ public:
         ModelStateIdentifier id{s.getData()};
 		StateSlot svmem[id.getLength()];
 		id.pull(ctx, svmem, true);
-		SV& sv = *(SV*)svmem;
+//		SV& sv = *(SV*)svmem;
 		size_t r = 0;
 		StateSlot svmemCopy[id.getLength()];
 
@@ -358,7 +358,7 @@ public:
 	}
 
 	StateID getInitial(Context* ctx) override {
-		Settings& settings = Settings::global();
+//		Settings& settings = Settings::global();
 
 		uint32_t procs = 4;
 

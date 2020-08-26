@@ -29,8 +29,8 @@ Value* ChunkMapper::generateGet(Value* chunkid) {
                                              );
 //    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 4);
 
-    Value* ch_data = gctx->gen->generateChunkGetData(call);
-    Value* ch_len = gctx->gen->generateChunkGetLen(call);
+//    Value* ch_data = gctx->gen->generateChunkGetData(call);
+//    Value* ch_len = gctx->gen->generateChunkGetLen(call);
 //    gctx->gen->builder.CreateCall( gctx->gen->pins("printf")
 //                                 , { gctx->gen->generateGlobalString("[CM " + type->_name + "] loaded chunk: %p %u <- %zx\n")
 //                                   , ch_data
@@ -52,8 +52,8 @@ Value* ChunkMapper::generatePut(Value* chunk) {
                                              , "chunkid." + type->_name
                                              );
 //    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 4);
-    Value* ch_data = gctx->gen->generateChunkGetData(chunk);
-    Value* ch_len = gctx->gen->generateChunkGetLen(chunk);
+//    Value* ch_data = gctx->gen->generateChunkGetData(chunk);
+//    Value* ch_len = gctx->gen->generateChunkGetLen(chunk);
 //    gctx->gen->builder.CreateCall( gctx->gen->pins("printf")
 //            , { gctx->gen->generateGlobalString("[CM " + type->_name + "] stored chunk: %p %u -> %zx\n")
 //                                           , ch_data
@@ -85,7 +85,8 @@ Value* ChunkMapper::generatePutAt(Value* len, Value* data, int chunkID) {
                                                , chunk, vChunkID
                                                }
                                              );
-//    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 5);
+    (void)call;
+    //    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 5);
     return vChunkID;
 }
 
@@ -123,6 +124,8 @@ Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* ap
 //                                               , newLength
 //                                       }
 //        );
+        (void)memcopy;
+        (void)memst;
         return copy;
     } else {
         auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, ch_len);
@@ -141,6 +144,7 @@ Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* ap
 //                                               , chunkid
 //                                       }
 //        );
+        (void)memcopy;
         return copy;
     }
 }

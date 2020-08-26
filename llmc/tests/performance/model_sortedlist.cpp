@@ -113,7 +113,7 @@ public:
 
                 if(proc.pc != 0) {
                     allOK = false;
-                    printf("Proc idx %u still going\n", idx);
+                    printf("Proc idx %zu still going\n", idx);
                 }
 
             }
@@ -146,6 +146,12 @@ public:
                 printf("NOT ALL WERE ADDED\n");
             }
 
+            if(!allOK) {
+                printf("Invalid end state: %zx\n", s.getData());
+            } else {
+//                printf("Valid end state: %zx\n", s.getData());
+
+            }
         }
 
         return r;

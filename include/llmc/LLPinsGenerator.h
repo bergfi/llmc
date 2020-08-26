@@ -819,9 +819,9 @@ public:
             // FIXME: mogelijk gaat edgeLabelValue fout wanneer 1 label niet geset is maar een andere wel
 
 
-            auto chunkMemory = lts["memory"].getValue(gctx.svout);
-            auto chunkMemoryID = builder.CreateLoad(chunkMemory);
-            auto length = builder.CreateLShr(chunkMemoryID, ConstantInt::get(t_int64, 40));
+//            auto chunkMemory = lts["memory"].getValue(gctx.svout);
+//            auto chunkMemoryID = builder.CreateLoad(chunkMemory);
+//            auto length = builder.CreateLShr(chunkMemoryID, ConstantInt::get(t_int64, 40));
 //            builder.CreateCall( pins("printf")
 //                              , { generateGlobalString("New state with memory ID: %zx length %u\n")
 //                                , chunkMemoryID
@@ -1335,9 +1335,9 @@ public:
                     );
                     gctx->edgeLabels["action"] = actionLabelChunkID;
 
-                    Value* ch = cm_action.generateGet(actionLabelChunkID);
-                    Value* ch_data = gctx->gen->generateChunkGetData(ch);
-                    Value* ch_len = gctx->gen->generateChunkGetLen(ch);
+//                    Value* ch = cm_action.generateGet(actionLabelChunkID);
+//                    Value* ch_data = gctx->gen->generateChunkGetData(ch);
+//                    Value* ch_len = gctx->gen->generateChunkGetLen(ch);
 
                     // DEBUG: print labels
                     for(auto& nameValue: gctx->edgeLabels) {
@@ -1782,10 +1782,10 @@ public:
         raw_string_ostream strout(str);
         strout << *reg;
 
-        auto sz = builder.CreateGEP(registerLayout[&F].registerLayout,
-                                    ConstantPointerNull::get(registerLayout[&F].registerLayout->getPointerTo()),
-                                    {ConstantInt::get(t_int, 1)}
-        );
+//        auto sz = builder.CreateGEP(registerLayout[&F].registerLayout,
+//                                    ConstantPointerNull::get(registerLayout[&F].registerLayout->getPointerTo()),
+//                                    {ConstantInt::get(t_int, 1)}
+//        );
 //        builder.CreateCall( pins("printf")
 //                , { generateGlobalString("vReg mapped model-register %zu (" + F.getName().str() + ":" + strout.str() + ") to %p (registers start address %p, size %p)\n")
 //                                    , ConstantInt::get(t_int, idx)
@@ -2217,7 +2217,7 @@ public:
 //                                                , registers
 //                                        }
 //                    );
-                    auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
+//                    auto dst_pc = lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
                     auto tres_p = lts["tres"].getValue(gctx->svout);
                     auto results = cm_tres.generateGet(tres_p);
                     auto results_data = generateChunkGetData(results);
@@ -2471,7 +2471,7 @@ public:
     void generateStore(GenerationContext* gctx, Value* modelPointer, Value* dataPointerOrRegister, Type* type) {
         ChunkMapper cm_memory(gctx, type_memory);
         auto chunkMemory = lts["memory"].getValue(gctx->svout);
-        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+//        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         Value* sv_memorylen;
         if(dataPointerOrRegister->getType() == type) {
             auto v = addAlloca(type, builder.GetInsertBlock()->getParent());
@@ -2491,7 +2491,7 @@ public:
     void generateStore(GenerationContext* gctx, Value* modelPointer, Value* dataPointerOrRegister, Value* size) {
         ChunkMapper cm_memory(gctx, type_memory);
         auto chunkMemory = lts["memory"].getValue(gctx->svout);
-        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+//        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         Value* sv_memorylen;
         builder.CreateCall(pins("llmc_memory_check"), {modelPointer});
         auto newMem = cm_memory.generateCloneAndModify(chunkMemory, modelPointer, dataPointerOrRegister, size, sv_memorylen);
@@ -2559,7 +2559,7 @@ public:
         // offset to obtain the current real address. Current
         // means within the scope of this next-state call.
         auto simPointerValue_p = builder.CreatePtrToInt(simPointerValue, t_intptr);
-        auto allocatorID = builder.CreateLShr(simPointerValue_p, ptr_offset_threadid);
+//        auto allocatorID = builder.CreateLShr(simPointerValue_p, ptr_offset_threadid);
         simPointerValue_p = builder.CreateAnd(simPointerValue_p, ptr_mask_location);
         simPointerValue_p = builder.CreateAdd(simPointerValue_p, builder.CreatePtrToInt(sv_memorydata, t_intptr));
         simPointerValue_p = builder.CreateIntToPtr(simPointerValue_p, type);
@@ -2626,8 +2626,8 @@ public:
 //            IC->setName("IC");
 //        }
 
-        Value* mappedPointer = nullptr;
-        Value* mappedValue = nullptr;
+//        Value* mappedPointer = nullptr;
+//        Value* mappedValue = nullptr;
 
         // Value-map all the operands of the instruction
         for(auto& OI: IC->operands()) {
@@ -2636,11 +2636,11 @@ public:
             // needs be performed
             if(dyn_cast<Value>(OI.get()) == ptr) {// && !isa<GlobalVariable>(ptr) && !isa<ConstantExpr>(ptr) && !isa<Constant>(ptr)) {
 
-                mappedPointer = OI = vMapPointer(gctx, registers, sv_memorydata, OI.get(), I->getPointerOperand()->getType());
+                OI = vMapPointer(gctx, registers, sv_memorydata, OI.get(), I->getPointerOperand()->getType());
 
             // If this is a 'normal' register or global, simply map it
             } else {
-                mappedValue = OI = vMap(gctx, OI);
+                OI = vMap(gctx, OI);
             }
 
         }
@@ -2803,7 +2803,7 @@ public:
                         Value* dst = vGetMemOffset(gctx, registers, I->getArgOperand(0));
                         Value* src = vGetMemOffset(gctx, registers, I->getArgOperand(1));
                         Value* size = vMap(gctx, I->getArgOperand(2));
-                        Value* isVolatile = vMap(gctx, I->getArgOperand(3));
+//                        Value* isVolatile = vMap(gctx, I->getArgOperand(3));
                         auto storage = generateAccessToMemory(gctx, src, size); //TODO: align using src/dst?
                         generateStore(gctx, dst, storage, size);
                     }
@@ -2832,6 +2832,8 @@ public:
                         type = dyn_cast<PointerType>(I->getArgOperand(1)->getType())->getPointerElementType();
                         memorder = I->getArgOperand(3);
                     }
+
+                    (void)memorder;
 
 //                    builder.CreateCall( pins("printf")
 //                            , { generateGlobalString("__atomic_load %p %p %u\n")
@@ -2883,6 +2885,8 @@ public:
                         memorder = I->getArgOperand(3);
                     }
 
+                    (void)memorder;
+
 //                    builder.CreateCall( pins("printf")
 //                            , { generateGlobalString("__atomic_store %p %p %u\n")
 //                                                , ptr
@@ -2924,8 +2928,10 @@ public:
                         type = dyn_cast<PointerType>(I->getArgOperand(1)->getType())->getPointerElementType();
                     }
 
-                    Value* memorder_success = vMap(gctx, I->getArgOperand(4));
-                    Value* memorder_failure = vMap(gctx, I->getArgOperand(5));
+                    (void)weak;
+
+//                    Value* memorder_success = vMap(gctx, I->getArgOperand(4));
+//                    Value* memorder_failure = vMap(gctx, I->getArgOperand(5));
 
                     auto storagePtr = generateAccessToMemory(gctx, ptr, size);
                     auto storageExpected = generateAccessToMemory(gctx, expected, size);
@@ -3475,7 +3481,7 @@ public:
 
                         auto global_ptr = generatePointerToGlobal(globalsInit, &v);
                         //builder.CreateStore(vMap(&gctx, v.getInitializer()), global_ptr);
-                        auto cpy = builder.CreateMemCpy( global_ptr
+                        builder.CreateMemCpy( global_ptr
                                 , global_ptr->getPointerAlignment(pinsModule->getDataLayout())
                                 , mappedConstantGlobalVariables[&v]
                                 , mappedConstantGlobalVariables[&v]->getPointerAlignment(pinsModule->getDataLayout())

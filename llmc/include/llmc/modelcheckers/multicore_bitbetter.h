@@ -16,9 +16,11 @@
 using namespace libfrugi;
 
 #define tprintf(str, ...) {}
-//#define tprintf(str, ...) { \
-//    printf(str, __VA_ARGS__); fflush(stdout);\
-//}
+/*
+#define tprintf(str, ...) { \
+    printf(str, __VA_ARGS__); fflush(stdout);\
+}
+*/
 
 struct cpuset {
 
@@ -125,7 +127,7 @@ public:
         signal(SIGINT, signalHandler);
     }
 
-    MultiCoreModelChecker(Model* m, Listener& listener): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _centralStateEnqueues(0), _centralStateDequeues(0), _threads(0), _stats(1), _listener(listener), _buildSizeHistogram(0) {
+    MultiCoreModelChecker(Model* m, Listener& listener): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _centralStateEnqueues(0), _centralStateDequeues(0), _listener(listener), _threads(0), _stats(1), _buildSizeHistogram(0) {
         _rootTypeID = 0;
         single = this; //TODO: remove
 
