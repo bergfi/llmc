@@ -5,7 +5,8 @@
 #include <sstream>
 
 #include <llmc/generation/types/SVTypeManager.h>
-#include <llmc/generation/types/SVTypes.h>
+#include <llmc/generation/types/SVTree.h>
+#include <llmc/generation/types/SVAccessor.h>
 #include <llmc/llvmincludes.h>
 
 using namespace llvm;
@@ -231,7 +232,7 @@ public:
      * @param name The name of the child to access.
      * @return The SVTree child node with the specified name.
      */
-    SVTree& operator[](std::string name) {
+    SVAccessor<SVTree> operator[](std::string name) {
         return (*sv)[name];
     }
 
@@ -240,8 +241,12 @@ public:
      * @param i The index of the child to access.
      * @return The SVTree child node at the specified index.
      */
-    SVTree& operator[](size_t i) {
+    SVAccessor<SVTree> operator[](size_t i) {
         return (*sv)[i];
+    }
+
+    SVAccessor<SVTree> operator[](Value* idx) {
+        return (*sv)[idx];
     }
 
     bool hasSV() const { return sv != nullptr; }

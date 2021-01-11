@@ -133,7 +133,19 @@ public:
         return InsertedState(idx.getState().getData(), idx.isInserted());
     }
     InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
-        auto idx = _store.deltaMayExtend(DTreeIndex(stateID.getData()), offset, data, length, isRoot);
+        auto idx = data ? _store.deltaMayExtend(DTreeIndex(stateID.getData()), offset, data, length, isRoot)
+                        : _store.extend(DTreeIndex(stateID.getData()), offset+length, isRoot)
+                        ;
+        return InsertedState(idx.getState().getData(), idx.isInserted());
+    }
+
+    InsertedState append(StateID const& stateID, size_t length, const StateSlot* data, bool isRoot) {
+        auto idx = _store.extend(DTreeIndex(stateID.getData()), 1, length, data, isRoot);
+        return InsertedState(idx.getState().getData(), idx.isInserted());
+    }
+
+    InsertedState extend(StateID const& stateID, size_t expandWith, bool isRoot) {
+        auto idx = _store.extend(DTreeIndex(stateID.getData()), expandWith, isRoot);
         return InsertedState(idx.getState().getData(), idx.isInserted());
     }
 

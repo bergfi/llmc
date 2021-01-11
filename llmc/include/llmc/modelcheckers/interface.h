@@ -19,9 +19,19 @@ public:
     }
     StateSlot* allocate(size_t slots) {
         auto current = _next;
-        _next += (slots+sizeof(uint64_t) / sizeof(StateSlot)-1) * sizeof(StateSlot) / sizeof(uint64_t);
-        assert(_next <= _buffer.data() + _buffer.capacity());
+        _next += (slots + (sizeof(uint64_t) / sizeof(StateSlot) - 1)) / (sizeof(uint64_t) / sizeof(StateSlot));
+#ifndef NDEBUG
+        if(_next > _buffer.data() + _buffer.capacity()) {
+            fprintf(stderr, "SimpleAllocator(%p)::allocate(%zu): allocator full (%zu), next %p\n", this, slots, _buffer.capacity(), _next);
+            fflush(stderr);
+            abort();
+        }
+#endif
         return (StateSlot*)current;
+    }
+
+    size_t capacity() {
+        return _buffer.capacity();
     }
 
     void clear() {
@@ -150,6 +160,7 @@ public:
     virtual StateID newSubState(VContext<STORAGE>* ctx, size_t length, StateSlot* slots) = 0;
     virtual StateID newSubState(VContext<STORAGE>* ctx, StateID const& stateID, Delta const& delta) = 0;
     virtual StateID newSubState(VContext<STORAGE>* ctx, StateID const& stateID, size_t offset, size_t length, const StateSlot* slots) = 0;
+    virtual StateID appendState(VContext<STORAGE>* ctx, StateID const& stateID, size_t length, const StateSlot* slots, bool rootState) = 0;
     virtual const FullState* getSubState(VContext<STORAGE>* ctx, StateID const& s) = 0;
     virtual bool getStatePartial(VContext<STORAGE>* ctx, StateID const& s, size_t offset, StateSlot* data, size_t length, bool isRoot = true) = 0;
     virtual bool getSubStatePartial(VContext<STORAGE>* ctx, StateID const& s, size_t offset, StateSlot* data, size_t length) = 0;

@@ -9,6 +9,8 @@ void* t0(void* data) {
 int main(int argc, char** argv) {
     pthread_t th1;
     size_t R1 = 0;
+	assert(&th1);
+//	assert(&th1 == (pthread_t*)0x0100000000000000ULL);
     pthread_create(&th1, 0, &t0, 0);
     pthread_join(th1, (void**)&R1);
     assert( R1 == 1234 );

@@ -194,6 +194,11 @@ public:
         return insertedState.getState();
     }
 
+    llmc::storage::StorageInterface::StateID appendState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t length, const llmc::storage::StorageInterface::StateSlot* data, bool rootState) override {
+        auto insertedState = _storage.append(stateID, length, data, rootState);
+        return insertedState.getState();
+    }
+
     const llmc::storage::StorageInterface::FullState* getSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& s) override {
         auto ctx = static_cast<Context*>(ctx_);
         if constexpr(Storage::accessToStates()) {

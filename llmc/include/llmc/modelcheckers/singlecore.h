@@ -84,13 +84,13 @@ public:
                     if(oldNr == _transitions) {
 
                         // TODO: dirty hack, this checks the PC of the first process
-//                        uint32_t status;
-//                        getStatePartial(&ctx, ctx.sourceState.getData(), 6, &status, 1);
-//                        if(status != 0) {
-//                            printf("INVALID END STATE %zu\n", ctx.sourceState.getData());
-//                        } else {
-//                            printf("VALID END STATE %zu\n", ctx.sourceState.getData());
-//                        }
+                        uint32_t status;
+                        getStatePartial(&ctx, ctx.sourceState.getData(), 6, &status, 1);
+                        if(status != 0) {
+                            printf("INVALID END STATE %zu\n", ctx.sourceState.getData());
+                        } else {
+                            printf("VALID END STATE %zu\n", ctx.sourceState.getData());
+                        }
                     }
                     level_states++;
                 } while(!stateQueue.empty());
@@ -180,7 +180,7 @@ public:
             fsd->destroy();
 //            _listener.writeState(this->getModel(), insertedState.getState(), 0, nullptr);
             stateQueueNew.push_back(insertedState.getState());
-            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState());
+            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState()) * sizeof(StateSlot);
         }
         auto r = llmc::storage::StorageInterface::InsertedState(insertedState.getState(), insertedState.isInserted());
 //        std::cout << "[SCM] newState(" << typeID << ", " << length << ") -> " << r << std::endl;
@@ -213,7 +213,7 @@ public:
             auto fsd = getState(ctx_, insertedState.getState());
             _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 //            _listener.writeState(this->getModel(), insertedState.getState(), 0, nullptr);
-            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState());
+            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState()) * sizeof(StateSlot);
         }
         _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
         _transitions++;
@@ -230,7 +230,7 @@ public:
             auto fsd = getState(ctx_, insertedState.getState());
             _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 //            _listener.writeState(this->getModel(), insertedState.getState(), 0, nullptr);
-            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState());
+            ctx->stateBytesInsertedIntoStorage += _storage.determineLength(insertedState.getState()) * sizeof(StateSlot);
         }
         _listener.writeTransition(stateID, insertedState.getState(), _m->getTransitionInfo(ctx, tinfo));
         _transitions++;
@@ -254,6 +254,7 @@ public:
     }
 
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots) override {
+        Context *ctx = static_cast<Context *>(ctx_);
         auto insertedState = _storage.insert(slots, length, false);
         assert(length);
         assert(insertedState.getState().getData());
@@ -262,14 +263,21 @@ public:
         assert((insertedState.getState().getData() >> 40) && "tried to return chunkID without length");
 //        printf("newSubState: %zx\n", insertedState.getState());
 
+        if(insertedState.isInserted()) {
+            ctx->stateBytesInsertedIntoStorage += length * sizeof(StateSlot);
+        }
         return insertedState.getState();
     }
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, Delta const& delta) override {
+        Context *ctx = static_cast<Context *>(ctx_);
         auto insertedState = _storage.insert(stateID, delta, false);
         assert(insertedState.getState().getData());
         auto fsd = getSubState(ctx_, insertedState.getState());
         _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 
+        if(insertedState.isInserted()) {
+            ctx->stateBytesInsertedIntoStorage += fsd->getLength() * sizeof(StateSlot);
+        }
 //        auto fsdOld = getSubState(ctx_, insertedState.getState());
 //        printf("[CAM64] before: %zx %u, delta: %u %u, after: %zx %u\n", stateID, fsdOld->getLength(), delta.getOffset(), delta.getLength(), insertedState.getState(), fsd->getLength());
 
@@ -279,11 +287,37 @@ public:
     }
 
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t offset, size_t length, const StateSlot* data) override {
+        Context *ctx = static_cast<Context *>(ctx_);
         auto insertedState = _storage.insert(stateID, offset, length, data, false);
         assert(insertedState.getState().getData());
         auto fsd = getSubState(ctx_, insertedState.getState());
         _listener.writeState(this->getModel(), insertedState.getState(), fsd);
 
+        if(insertedState.isInserted()) {
+            ctx->stateBytesInsertedIntoStorage += fsd->getLength() * sizeof(StateSlot);
+        }
+
+        //        auto fsdOld = getSubState(ctx_, insertedState.getState());
+//        printf("[CAM64] before: %zx %u, delta: %u %u, after: %zx %u\n", stateID, fsdOld->getLength(), delta.getOffset(), delta.getLength(), insertedState.getState(), fsd->getLength());
+
+//        printf("newSubState: %zx\n", insertedState.getState());
+        assert((insertedState.getState().getData() >> 40) && "tried to return chunkID without length");
+        return insertedState.getState();
+    }
+
+    llmc::storage::StorageInterface::StateID appendState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t length, const StateSlot* data, bool rootState) override {
+        Context *ctx = static_cast<Context *>(ctx_);
+
+        assert(!rootState && "need to do root states like we do in newTransition");
+
+        auto insertedState = _storage.append(stateID, length, data, rootState);
+        assert(insertedState.getState().getData());
+        auto fsd = getSubState(ctx_, insertedState.getState());
+        _listener.writeState(this->getModel(), insertedState.getState(), fsd);
+
+        if(insertedState.isInserted()) {
+            ctx->stateBytesInsertedIntoStorage += fsd->getLength() * sizeof(StateSlot);
+        }
 //        auto fsdOld = getSubState(ctx_, insertedState.getState());
 //        printf("[CAM64] before: %zx %u, delta: %u %u, after: %zx %u\n", stateID, fsdOld->getLength(), delta.getOffset(), delta.getLength(), insertedState.getState(), fsd->getLength());
 

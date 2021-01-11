@@ -155,6 +155,21 @@ public:
         builder.CreateCondBr(Cond, BBTrue, BBFalse);
     }
 
+    If2(IRBuilder<>& builder, Value* Cond, std::string const& name)
+            : builder(builder)
+            , Cond(Cond)
+            , BBTrue(nullptr)
+            , BBFalse(nullptr)
+            , BBFinal(nullptr)
+            , usedBBFalse(0)
+            , usedBBTrue(0)
+    {
+        BBTrue = BasicBlock::Create(builder.getContext(), name + "_true", builder.GetInsertBlock()->getParent());
+        BBFalse = BasicBlock::Create(builder.getContext(), name + "_false", builder.GetInsertBlock()->getParent());
+        BBFinal = BasicBlock::Create(builder.getContext(), name + "_final", builder.GetInsertBlock()->getParent());
+        builder.CreateCondBr(Cond, BBTrue, BBFalse);
+    }
+
     Value*& getCond() {
         this->Cond = Cond;
         return Cond;
@@ -172,9 +187,11 @@ public:
     }
 
     void startTrue() {
+        usedBBTrue = true;
         builder.SetInsertPoint(BBTrue);
     }
     void startFalse() {
+        usedBBFalse = true;
         builder.SetInsertPoint(BBFalse);
     }
     void endTrue() {
@@ -183,7 +200,15 @@ public:
     void endFalse() {
         builder.CreateBr(BBFinal);
     }
-    void finaly() {
+    void finally() {
+        if(!usedBBFalse) {
+            builder.SetInsertPoint(BBFalse);
+            builder.CreateBr(BBFinal);
+        }
+        if(!usedBBTrue) {
+            builder.SetInsertPoint(BBTrue);
+            builder.CreateBr(BBFinal);
+        }
         builder.SetInsertPoint(BBFinal);
     }
 

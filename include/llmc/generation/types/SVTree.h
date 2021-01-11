@@ -3,6 +3,8 @@
 #include <ltsmin/pins.h>
 #include <ltsmin/pins-util.h>
 #include <llmc/llvmincludes.h>
+#include <llmc/generation/types/SVAccessor.h>
+#include <llmc/generation/types/SVType.h>
 
 using namespace llvm;
 
@@ -11,62 +13,6 @@ namespace llmc {
 class LLPinsGenerator;
 class SVTypeManager;
 class SVTree;
-
-/**
- * @class SVType
- * @author Freark van der Berg
- * @date 04/07/17
- * @file LLPinsGenerator.h
- * @brief A type in the tree of SVTree nodes.
- * @see SVTree
- */
-class SVType {
-public:
-    SVType(std::string name, SVTypeManager* gen)
-            : _name(std::move(name)), _ltsminType(LTStypeChunk), _llvmType(nullptr), _PaddedLLVMType(nullptr) {
-    }
-
-
-    SVType(std::string name, data_format_t ltsminType, llvm::Type* llvmType, SVTypeManager* manager);
-
-    /**
-     * @brief Request the LLVMType of this SVType.
-     * @return The LLVM Type of this SVType
-     */
-    llvm::Type* getLLVMType() {
-        return _PaddedLLVMType;
-    }
-
-    /**
-     * @brief Request the real LLVMType of this SVType.
-     * The different with @c getLLVMType() is that in the event the type
-     * does not perfectly fit a number of state slots, the type in the
-     * SV can differ from the real type, because padding is added to
-     * make it fit.
-     * @return The real LLVM Type of this SVType
-     */
-    llvm::Type* getRealLLVMType() {
-        return _llvmType;
-    }
-
-public:
-    std::string _name;
-    data_format_t _ltsminType;
-    int index;
-protected:
-    llvm::Type* _llvmType;
-    llvm::Type* _PaddedLLVMType;
-};
-
-class SVStructType : public SVType {
-public:
-    SVStructType(std::string name, SVTypeManager* manager, std::vector<SVTree*> children);
-};
-
-class SVArrayType : public SVType {
-public:
-    SVArrayType(std::string name, SVType* elementType, SVTypeManager* manager);
-};
 
 /**
  * @class SVTree
@@ -93,9 +39,11 @@ protected:
             ,   index(std::move(index))
             ,   type(type)
             ,   llvmType(nullptr)
+            , _isArray(false)
     {
     }
 
+public:
     LLPinsGenerator* gen();
 
     SVTypeManager* manager() {
@@ -128,6 +76,7 @@ public:
             ,   index(0)
             ,   type(type)
             ,   llvmType(nullptr)
+            , _isArray(false)
     {
     }
 
@@ -149,6 +98,7 @@ public:
             ,   index(0)
             ,   type(type)
             ,   llvmType(nullptr)
+            , _isArray(false)
     {
         auto st = type ? dyn_cast<StructType>(type->getLLVMType()) : nullptr;
         if(st && st->getNumElements() != children.size()) {
@@ -167,6 +117,14 @@ public:
         }
     }
 
+    static SVTree* newArray(std::string name, std::string typeName, SVTree* tree, int count) {
+        SVTree* t = new SVTree(name, typeName);
+        t->_isArray = true;
+        t->children = std::vector<SVTree*>(count, tree);
+        tree->parent = t;
+        return t;
+    }
+
     /**
      * @brief Deletes this node and its children.
      */
@@ -181,16 +139,18 @@ public:
      * @param name The name of the child to access.
      * @return The SVTree child node with the specified name.
      */
-    SVTree& operator[](std::string name) {
-        for(auto& c: children) {
-            if(c->getName() == name) {
-                return *c;
-            }
-        }
-        assert(0);
-        auto i = children.size();
-        children.push_back(new SVTree(manager(), name, nullptr, this, i));
-        return *children[i];
+    SVAccessor<SVTree> operator[](std::string name) {
+        assert(!_isArray);
+        return SVAccessor<SVTree>(*this)[name];
+//        for(auto& c: children) {
+//            if(c->getName() == name) {
+//                return *c;
+//            }
+//        }
+//        assert(0);
+//        auto i = children.size();
+//        children.push_back(new SVTree(manager(), name, nullptr, this, i));
+//        return *children[i];
     }
 
     /**
@@ -198,13 +158,19 @@ public:
      * @param i The index of the child to access.
      * @return The SVTree child node at the specified index.
      */
-    SVTree& operator[](size_t i) {
-        if(i >= children.size()) {
-            assert(0);
-            children.resize(i+1);
-            children[i] = new SVTree(manager(), name, nullptr, this, i);
-        }
-        return *children[i];
+    SVAccessor<SVTree> operator[](size_t i) {
+        return SVAccessor<SVTree>(*this)[i];
+//        if(i >= children.size()) {
+//            assert(0);
+//            children.resize(i+1);
+//            children[i] = new SVTree(manager(), name, nullptr, this, i);
+//        }
+//        return *children[i];
+    }
+
+    SVAccessor<SVTree> operator[](Value* idx) {
+        assert(_isArray);
+        return SVAccessor<SVTree>(*this)[idx];
     }
 
     /**
@@ -299,6 +265,9 @@ public:
 
     SVType* getType() {
         if(type) {
+            if(_isArray) {
+                return type;
+            }
             llvm::StructType* st = dyn_cast<StructType>(type->getLLVMType());
             raw_os_ostream out(std::cerr);
             if(children.size() > 0 && st && st->getNumElements() != children.size()) {
@@ -314,6 +283,9 @@ public:
                 out.flush();
                 assert(0);
             }
+            return type;
+        } else if(_isArray) {
+            type = new SVArrayType(name + "_array", manager(), children[0]->getType(), children.size());
             return type;
         } else {
             type = new SVStructType(name + "_struct", manager(), children);
@@ -369,6 +341,8 @@ protected:
     SVType* type;
     Type* llvmType;
     std::vector<SVTree*> children;
+
+    bool _isArray;
 
     friend class LLVMLTSType;
 

@@ -53,11 +53,13 @@ public:
                                , std::vector<Instruction*> instructions
                                , std::vector<llvm::Value*> conditions
                                , std::vector<Instruction*> actions
+                               , bool emitter
                                )
     : thread_id(thread_id)
     , instructions(instructions)
     , conditions(std::move(conditions))
     , actions(std::move(actions))
+    , _emitter(emitter)
     {
         type = TransitionGroup::Type::Instructions;
     }
@@ -82,6 +84,8 @@ private:
      */
     std::vector<Instruction*> actions;
 
+    bool _emitter;
+
     friend class LLPinsGenerator;
 };
 
@@ -101,12 +105,12 @@ public:
         f = lambda;
     }
 
-    void execute(GenerationContext* gctx) {
-        f(gctx, this);
+    void execute(GenerationContext* gctx, BasicBlock* noReportBB) {
+        f(gctx, this, noReportBB);
     }
 
 private:
-    std::function<void(GenerationContext*, TransitionGroupLambda*)> f;
+    std::function<void(GenerationContext*, TransitionGroupLambda*, BasicBlock*)> f;
     friend class LLPinsGenerator;
 };
 

@@ -92,7 +92,11 @@ public:
         o[1] &= 0x00FFFFFF;
 
         memcpy(n, o, sizeof(o));
-        memcpy(n+_stateLength+offset, data, length * sizeof(StateSlot));
+        if(data) {
+            memcpy(n+_stateLength+offset, data, length * sizeof(StateSlot));
+        } else {
+            memset(n+_stateLength+offset, 0, length * sizeof(StateSlot));
+        }
 
         tree_ref_t ref;
         auto seen = TreeDBSLLfop_incr_ref(_store, o, n, isRoot, true, &ref);
@@ -100,8 +104,10 @@ public:
         ref |= newLength << 40;
 
         return InsertedState(ref, seen == 0);
-
-
+    }
+    InsertedState append(StateID const& stateID, size_t length, const StateSlot* data, bool isRoot) {
+        size_t oldLength = stateID.getData() >> 40;
+        return insert(stateID, oldLength, length, data, isRoot);
     }
 
     FullState* get(StateID id, bool isRoot) {

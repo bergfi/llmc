@@ -114,9 +114,11 @@ public:
         std::unordered_map<size_t, size_t> _sizeHistogram;
         System::Timer timer;
 
+        pthread_t _owner;
+
         bool quit;
 
-        Context(MultiCoreModelChecker* mc, Model* model, size_t threadID): VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker>(mc, model), localStates(0), localTransitions(0), threadID(threadID), stateSlotsInsertedIntoStorage(0), quit(false) {}
+        Context(MultiCoreModelChecker* mc, Model* model, size_t threadID): VContextImpl<llmc::storage::StorageInterface, MultiCoreModelChecker>(mc, model), localStates(0), localTransitions(0), threadID(threadID), stateSlotsInsertedIntoStorage(0), _owner(0), quit(false) {}
     };
 
     MultiCoreModelChecker(Model* m): VModelChecker<llmc::storage::StorageInterface>(m), _states(0), _transitions(0), _threads(0), _stats(1), _buildSizeHistogram(0) {
@@ -143,6 +145,10 @@ public:
         Model& model = *ctx.getModel();
         Storage& storage = mc.getStorage();
 
+        assert(!ctx._owner);
+
+        ctx._owner = pthread_self();
+
         ctx.elapsedSeconds = 0.0;
 
         size_t& tid = ctx.threadID;
@@ -163,11 +169,17 @@ public:
             ctx.elapsedSeconds += ctx.timer.getElapsedSeconds();
             StateID current = mc.getNextQueuedState(&ctx);
             ctx.timer.reset();
-            if(!current.exists()) break;
+            if(!current.exists()) {
+                assert(ctx.stateQueueNew.empty());
+                break;
+            }
             tprintf("[%i] got %16zx \n", tid, current);
             do {
                 tprintf("[%i] current state: %16zx \n", tid, current);
-                if(__glibc_unlikely(ctx.quit)) break;
+                if(__glibc_unlikely(ctx.quit)) {
+                    abort();
+                    break;
+                }
                 ctx.sourceState = current.getData();
                 ctx.allocator.clear();
                 model.getNextAll(ctx.sourceState, &ctx);
@@ -176,10 +188,12 @@ public:
                 }
                 if constexpr(limit != 0) {
                     if(ctx.stateQueueNew.size() >= limit) {
+                        printf("[%i] reached limit %u\n", tid, limit);
                         return nullptr;
                     }
                 }
                 current = ctx.stateQueueNew.front().getData();
+                assert(current.getData() != 0);
                 ctx.stateQueueNew.pop_front();
             } while(true);
             tprintf("[%i] done all in the local queue, need more states\n", tid);
@@ -189,7 +203,13 @@ public:
     }
 
     void go() {
-        Context ctx(this, this->_m, 0);
+//        Context ctx(this, this->_m, 0);
+        if(_threads == 0) {
+            _threads = System::getNumberOfAvailableCores();
+        }
+        _workerContexts.reserve(_threads);
+        _workerContexts.emplace_back(this, this->_m, 0);
+        Context& ctx = _workerContexts[0];
 
         size_t fixedSize = this->_m->getStateLength();
         if(fixedSize) {
@@ -239,16 +259,20 @@ public:
 
             ctx.localStates = 0;
             ctx.localTransitions = 0;
+            ctx._owner = 0;
+            ctx.allocator.clear();
 
-            if(_threads == 0) {
-                _threads = System::getNumberOfAvailableCores();
-            }
             _workers.reserve(_threads);
-            _workerContexts.reserve(_threads);
             printf("going (%zu)...\n", _threads);
             nonWaiters = _threads;
             quit = false;
+            printf("stateQueueNew.size():     %zu\n", stateQueueNew.size());
+            printf("ctx.stateQueueNew.size(): %zu\n", ctx.stateQueueNew.size());
             stateQueueNew.swap(ctx.stateQueueNew);
+
+            for(size_t tid = 1; tid < _threads; ++tid) {
+                _workerContexts.emplace_back(this, this->_m, tid);
+            }
 
             // Fire up all threads
             for(size_t tid = 0; tid < _threads; ++tid) {
@@ -256,7 +280,6 @@ public:
                 pthread_attr_t attr;
                 pthread_attr_init(&attr);
                 pthread_attr_setaffinity_np(&attr, set._size, set._mask);
-                _workerContexts.emplace_back(this, this->_m, tid);
                 pthread_create(&_workers[tid], &attr, (void* (*)(void*)) workerThread<0>,
                                (void*) &_workerContexts[tid]);
             }
@@ -362,9 +385,9 @@ public:
             threadElapsed += ctx.timer.getElapsedSeconds();
         }
         printf("Running for %.2lfs\n", elapsed); fflush(stdout);
-        printf("Found %zu states, explored %zu transitions\n", states, transitions);
-        printf("States/s: %lf\n", ((double)states)/elapsed);
-        printf("Transitions/s: %lf\n", ((double)transitions)/elapsed);
+        printf("Found ~%zu states, explored ~%zu transitions\n", states, transitions);
+        printf("States/s: ~%lf\n", ((double)states)/elapsed);
+        printf("Transitions/s: ~%lf\n", ((double)transitions)/elapsed);
         printf("Thread efficiency: %3.3lf%%\n", 100 * threadElapsed / (_threads * elapsed));
         printf("Central enqueues: %zu (%3.3lf%%)\n", _centralStateEnqueues.load(std::memory_order_relaxed), (double)100 * _centralStateEnqueues.load(std::memory_order_relaxed) / _states);
         printf("Central dequeues: %zu (%3.3lf%%)\n", _centralStateDequeues.load(std::memory_order_relaxed), (double)100 * _centralStateDequeues.load(std::memory_order_relaxed) / _states);
@@ -431,6 +454,9 @@ public:
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t length, llmc::storage::StorageInterface::StateSlot* slots, TransitionInfoUnExpanded const& tinfo) override {
         Context *ctx = static_cast<Context *>(ctx_);
+        assert(ctx->_owner == pthread_self());
+
+        assert(length > 0);
 
         // the type ID could be extracted from stateID...
         auto insertedState = newState(ctx_, _rootTypeID, length, slots);
@@ -460,6 +486,7 @@ public:
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::Delta const& delta, TransitionInfoUnExpanded const& tinfo) override {
         Context* ctx = static_cast<Context*>(ctx_);
+        assert(ctx->_owner == pthread_self());
         StateID const& stateID = *reinterpret_cast<StateID const*>(&ctx->sourceState);
         auto insertedState = _storage.insert(stateID, delta, true);
         if(insertedState.isInserted()) {
@@ -481,7 +508,9 @@ public:
 
     llmc::storage::StorageInterface::StateID newTransition(VContext<llmc::storage::StorageInterface>* ctx_, size_t offset, size_t length, const StateSlot* slots, TransitionInfoUnExpanded const& transition) override {
         Context* ctx = static_cast<Context*>(ctx_);
+        assert(ctx->_owner == pthread_self());
         StateID const& stateID = *reinterpret_cast<StateID const*>(&ctx->sourceState);
+        assert(stateID.getData() != 0);
         auto insertedState = _storage.insert(stateID, offset, length, slots, true);
         if(insertedState.isInserted()) {
             if(_buildSizeHistogram) {
@@ -534,6 +563,16 @@ public:
     llmc::storage::StorageInterface::StateID newSubState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t offset, size_t length, const llmc::storage::StorageInterface::StateSlot* data) override {
         Context* ctx = static_cast<Context*>(ctx_);
         auto insertedState = _storage.insert(stateID, offset, length, data, false);
+        if(_buildSizeHistogram && insertedState.isInserted()) {
+            ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
+        }
+        return insertedState.getState();
+    }
+
+    llmc::storage::StorageInterface::StateID appendState(VContext<llmc::storage::StorageInterface>* ctx_, llmc::storage::StorageInterface::StateID const& stateID, size_t length, const llmc::storage::StorageInterface::StateSlot* data, bool rootState) override {
+        assert(!rootState && "need to do root states like we do in newTransition");
+        Context* ctx = static_cast<Context*>(ctx_);
+        auto insertedState = _storage.append(stateID, length, data, rootState);
         if(_buildSizeHistogram && insertedState.isInserted()) {
             ctx->_sizeHistogram[_storage.determineLength(insertedState.getState())]++;
         }

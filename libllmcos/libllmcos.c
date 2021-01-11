@@ -25,7 +25,7 @@ void llmc_os_memory_init(void* ctx, int data_typeno, __int64_t* ci_data, __int32
     c_data.len = START_BYTES;
     c_data.data = a;
     *ci_data = pins_chunk_put64(ctx, data_typeno, c_data);
-    printf("[LLMC OS] Initialized memory to %u bytes (chunk ID: %zx)\n", c_data.len, *ci_data);
+//    printf("[LLMC OS] Initialized memory to %u bytes (chunk ID: %zx)\n", c_data.len, *ci_data);
     fflush(stdout);
 }
 

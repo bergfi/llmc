@@ -1,6 +1,6 @@
 #pragma once
 
-#include <llmc/generation/types/SVTypes.h>
+#include <llmc/generation/types/SVTree.h>
 #include <llmc/llvmincludes.h>
 
 using namespace llvm;
@@ -27,8 +27,8 @@ public:
     SVType* newStructType(std::string name, std::vector<SVTree*> children) {
         return insertType(new SVStructType(name, this, children));
     }
-    SVType* newArrayType(std::string name, SVType* elementType) {
-        return insertType(new SVArrayType(name, elementType, this));
+    SVType* newArrayType(std::string name, SVType* elementType, size_t count) {
+        return insertType(new SVArrayType(name, this, elementType, count));
     }
 
 //    SVType* getTypeFor(llvm::Type* llvmType) {

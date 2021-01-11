@@ -32,7 +32,7 @@ SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, SVTyp
     }
 }
 
-SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector<SVTree*> children): SVType(name, manager) {
+SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector<SVTree*> const& children): SVType(name, manager) {
     std::vector<Type*> types;
     for(auto& c: children) {
         types.push_back(c->getLLVMType());
@@ -44,6 +44,16 @@ SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector
     // such that much more information is available even when the SV is dynamically extended
     auto structType = StructType::create(manager->gen()->ctx, types, name, false);
     _PaddedLLVMType = _llvmType = structType;
+}
+
+SVArrayType::SVArrayType(std::string name, SVTypeManager* manager, SVType* elementType, size_t count): SVType(name, manager) {
+
+    // Should padded be the same one?
+    // TODO: currently, we require packed because we flatten the SV such that LTSmin can cope with it
+    // In the future we can send the SV type as tree and tell them where in the flattened version the data is,
+    // such that much more information is available even when the SV is dynamically extended
+    auto arrayType = ArrayType::get(elementType->getLLVMType(), count);
+    _PaddedLLVMType = _llvmType = arrayType;
 }
 
 Value* SVTree::getValue(Value* rootValue) {
@@ -138,7 +148,7 @@ bool SVTree::verify() {
     bool r = true;
     for(int i = 0; (size_t)i < children.size(); ++i) {
         auto& c = children[i];
-        assert(c->getIndex() == i);
+        assert(_isArray || c->getIndex() == i);
         assert(c->getParent() == this);
         if(!c->verify()) r = false;
     }

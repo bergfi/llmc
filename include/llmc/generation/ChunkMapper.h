@@ -112,7 +112,7 @@ public:
      * @param len Length of @c data
      * @return ChunkID of the cloned chunk
      */
-    Value* generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len, Value*& newLength);
+    Value* generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len);
 
     Value* generatePartialGet(Value* chunkid, Value* offset, Value* data, Value* len);
 

@@ -189,13 +189,21 @@ public:
             get(v, stateID, isRoot);
         }
 
-        memcpy(v + offset, data, length * sizeof(StateSlot));
+        if(data) {
+            memcpy(v+offset, data, length * sizeof(StateSlot));
+        } else {
+            memset(v+offset, 0, length * sizeof(StateSlot));
+        }
         if(offset > originLength) {
             memset(v+originLength, 0, (offset - originLength) * sizeof(StateSlot));
         }
 
         auto seen = TreeDBSLLfop_incr(_store, (int*)v, prevScratchPad, newScratchPad, true);
         return InsertedState(getIDFromTreeT(newScratchPad), seen == 0);
+    }
+    InsertedState append(StateID const& stateID, size_t length, const StateSlot* data, bool isRoot) {
+        size_t originLength = determineLength(stateID);
+        return insert(stateID, originLength, length, data, isRoot);
     }
 
     FullState* get(StateID stateID, bool isRoot) {
@@ -240,14 +248,28 @@ public:
         return true;
     }
 
-    void getPartial(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
-        size_t length = 0;
-        for(size_t p = 0; p < projection.getProjections(); ++p) {
-            length += projection.getProjection(p).getLengthAndOffsets().getLength();
+    void getPartial(StateID stateID, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        abort();
+        assert(_stateLength);
+        size_t len = determineLength(stateID);
+        if(len != _stateLength || isRoot == false) {
+            return _varLengthStorage.getPartial(stateID, projection, isRoot, buffer);
         }
-        memset(buffer, 0, length * sizeof(uint32_t));
+        tree_ref_t treeRef = getTreeRefFromID(stateID);
+        tree_t scratchPad = findScratchPadForState(treeRef);
+        int* originData;
+        if(scratchPad) {
+            originData = scratchPad;
+        } else {
+            originData = alloca(_stateLength*2*sizeof(int));
+            TreeDBSLLget(_store, getTreeRefFromID(stateID), originData);
+        }
+//        for(size_t p = 0; p < projection.getProjections(); ++p) {
+//        }
+
     }
     InsertedState delta(StateID idx, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        abort();
         return InsertedState();
     }
 

@@ -47,7 +47,7 @@ struct FullStateData {
     }
 
     void destroy() {
-        if(this->_misc & MASK_EXTERNALDATA) {
+        if((this->_misc & MASK_EXTERNALDATA) == 0) {
             free(this);
         }
     }

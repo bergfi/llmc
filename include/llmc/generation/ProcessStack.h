@@ -93,7 +93,7 @@ public:
      * @param F The function
      * @param setupCall
      */
-    void pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, CallInst* callSite);
+    void pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, CallInst* callSite, Value* targetThreadID = nullptr);
 
     /**
      * @brief Pops the latest frame from the stack and restores e.g.

@@ -29,8 +29,8 @@ Value* ChunkMapper::generateGet(Value* chunkid) {
                                              );
 //    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 4);
 
-//    Value* ch_data = gctx->gen->generateChunkGetData(call);
-//    Value* ch_len = gctx->gen->generateChunkGetLen(call);
+    Value* ch_data = gctx->gen->generateChunkGetData(call);
+    Value* ch_len = gctx->gen->generateChunkGetLen(call);
 //    gctx->gen->builder.CreateCall( gctx->gen->pins("printf")
 //                                 , { gctx->gen->generateGlobalString("[CM " + type->_name + "] loaded chunk: %p %u <- %zx\n")
 //                                   , ch_data
@@ -115,7 +115,7 @@ Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* ap
         auto memst = gctx->gen->builder.CreateMemSet( gctx->gen->builder.CreateGEP(copy, {ch_len})
                                                      , ConstantInt::get(gctx->gen->t_int8, 0)
                                                      , appendSize
-                                                     , 1
+                                                     , MaybeAlign(1)
                                                      );
 //        gctx->gen->setDebugLocation(memst, __FILE__, __LINE__ - 5);
 //        gctx->gen->builder.CreateCall( gctx->gen->pins("printf")
@@ -149,15 +149,15 @@ Value* ChunkMapper::generateGetAndCopy(Value* chunkid, Value*& ch_len, Value* ap
     }
 }
 
-Value* ChunkMapper::generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len, Value*& newLength) {
+Value* ChunkMapper::generateCloneAndModify(Value* chunkid, Value* offset, Value* data, Value* len) {
     //assert(0 && "unknown if the CAM version works");
     if(chunkid->getType()->isPointerTy()) {
-        chunkid = gctx->gen->builder.CreateLoad(chunkid);
+        chunkid = gctx->gen->builder.CreateLoad(chunkid, "chunkid." + type->_name + ".before");
     }
-    newLength = gctx->gen->builder.CreateAdd(gctx->gen->builder.CreateIntCast(offset, gctx->gen->t_int, false), gctx->gen->builder.CreateIntCast(len, gctx->gen->t_int, false));
-    len = gctx->gen->builder.CreateIntCast(len, newLength->getType(), false);
-    auto cmp = gctx->gen->builder.CreateICmpUGE(newLength, len);
-    newLength = gctx->gen->builder.CreateSelect(cmp, newLength, len);
+//    newLength = gctx->gen->builder.CreateAdd(gctx->gen->builder.CreateIntCast(offset, gctx->gen->t_int, false), gctx->gen->builder.CreateIntCast(len, gctx->gen->t_int, false));
+//    len = gctx->gen->builder.CreateIntCast(len, newLength->getType(), false);
+//    auto cmp = gctx->gen->builder.CreateICmpUGE(newLength, len);
+//    newLength = gctx->gen->builder.CreateSelect(cmp, newLength, len);
     auto f = gctx->gen->pins("pins_chunk_cam64");
     auto call = gctx->gen->builder.CreateCall( f
                                              , { gctx->model
@@ -167,7 +167,7 @@ Value* ChunkMapper::generateCloneAndModify(Value* chunkid, Value* offset, Value*
                                                , gctx->gen->builder.CreatePointerCast(data, f->getFunctionType()->getParamType(4))
                                                , gctx->gen->builder.CreateIntCast(len, f->getFunctionType()->getParamType(5), false)
                                                }
-                                             , "chunkid." + type->_name
+                                             , "chunkid." + type->_name + ".after"
                                              );
 //    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 10);
     return call;
@@ -193,33 +193,53 @@ Value* ChunkMapper::generatePartialGet(Value* chunkid, Value* offset, Value* dat
 }
 
 Value* ChunkMapper::generateCloneAndAppend(Value* chunkid, Value* data, Value* len, Value** oldLength) {
-    Value* ch = generateGet(chunkid);
-    Value* chData = gctx->gen->generateChunkGetData(ch);
-    Value* chLen = gctx->gen->generateChunkGetLen(ch);
-    if(oldLength) *oldLength = chLen;
-    Value* newLength = gctx->gen->builder.CreateAdd(chLen,len);
-    auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, newLength);
-    gctx->gen->builder.CreateMemCpy( copy
-                                   , 1
-                                   , chData
-                                   , 1
-                                   , chLen
-                                   );
-    if(data) {
-        gctx->gen->builder.CreateMemCpy( gctx->gen->builder.CreateGEP(copy, {chLen})
-                                       , 1
-                                       , data
-                                       , 1
-                                       , len
-                                       );
-    } else {
-        gctx->gen->builder.CreateMemSet( gctx->gen->builder.CreateGEP(copy, {chLen})
-                                       , ConstantInt::get(gctx->gen->t_int8, 0)
-                                       , len
-                                       , 1
-                                       );
+    //assert(0 && "unknown if the CAM version works");
+    if(chunkid->getType()->isPointerTy()) {
+        chunkid = gctx->gen->builder.CreateLoad(chunkid, "chunkid." + type->_name + ".before.append");
     }
-    return generatePut(newLength, copy);
+//    newLength = gctx->gen->builder.CreateAdd(gctx->gen->builder.CreateIntCast(offset, gctx->gen->t_int, false), gctx->gen->builder.CreateIntCast(len, gctx->gen->t_int, false));
+//    len = gctx->gen->builder.CreateIntCast(len, newLength->getType(), false);
+//    auto cmp = gctx->gen->builder.CreateICmpUGE(newLength, len);
+//    newLength = gctx->gen->builder.CreateSelect(cmp, newLength, len);
+    auto f = gctx->gen->pins("pins_chunk_append64");
+    auto call = gctx->gen->builder.CreateCall( f
+            , { gctx->model
+                                                       , ConstantInt::get(gctx->gen->t_int, idx)
+                                                       , gctx->gen->builder.CreateIntCast(chunkid, f->getFunctionType()->getParamType(2), false)
+                                                       , gctx->gen->builder.CreatePointerCast(data, f->getFunctionType()->getParamType(3))
+                                                       , gctx->gen->builder.CreateIntCast(len, f->getFunctionType()->getParamType(4), false)
+                                               }
+            , "chunkid." + type->_name + ".after.append"
+    );
+//    gctx->gen->setDebugLocation(call, __FILE__, __LINE__ - 10);
+    return call;
+//    Value* ch = generateGet(chunkid);
+//    Value* chData = gctx->gen->generateChunkGetData(ch);
+//    Value* chLen = gctx->gen->generateChunkGetLen(ch);
+//    if(oldLength) *oldLength = chLen;
+//    Value* newLength = gctx->gen->builder.CreateAdd(chLen,len);
+//    auto copy = gctx->gen->builder.CreateAlloca(gctx->gen->t_int8, newLength);
+//    gctx->gen->builder.CreateMemCpy( copy
+//                                   , 1
+//                                   , chData
+//                                   , 1
+//                                   , chLen
+//                                   );
+//    if(data) {
+//        gctx->gen->builder.CreateMemCpy( gctx->gen->builder.CreateGEP(copy, {chLen})
+//                                       , MaybeAlign(1)
+//                                       , data
+//                                       , MaybeAlign(1)
+//                                       , len
+//                                       );
+//    } else {
+//        gctx->gen->builder.CreateMemSet( gctx->gen->builder.CreateGEP(copy, {chLen})
+//                                       , ConstantInt::get(gctx->gen->t_int8, 0)
+//                                       , len
+//                                       , MaybeAlign(1)
+//                                       );
+//    }
+//    return generatePut(newLength, copy);
 }
 
 Value* ChunkMapper::generateCloneAndAppend(Value* chunkid, Value* data) {

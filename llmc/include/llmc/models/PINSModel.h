@@ -25,7 +25,7 @@ public:
 public:
     PINSModelBase(void* handle): _init(nullptr), _handle(handle), _stateVectorType(nullptr) {
         _pins_model_init = reinterpret_cast<decltype(_pins_model_init)>(dlsym(_handle, "pins_model_init"));
-        //_pins_getnextall = reinterpret_cast<decltype(_pins_getnextall)>(dlsym(_handle, "pins_getnextall"));
+//        _pins_getnextall = reinterpret_cast<decltype(_pins_getnextall)>(dlsym(_handle, "pins_getnextall"));
         assert(!_init);
     }
 
@@ -172,15 +172,19 @@ public:
 
     size_t getNextAll(StateID const& s, Context* ctx) override {
 
-        //const typename MODELCHECKER::FullState* state = ctx->getModelChecker()->getState(ctx, s);
-        //_pins_getnextall();
         auto cb = (TransitionCB)reportTransitionCB;//getCB_ReportTransition();
         auto fsd = ctx->getModelChecker()->getState(ctx, s);
-        for(int tg = 0; tg < this->_tgroups; ++tg) {
-//            _pins_getnext((model_t)nullptr, tg, ((int*)nullptr), nullptr, (void *)nullptr);
-            _pins_getnext((model_t)ctx, tg, ((int*)fsd->getData()), cb, (void *)ctx);
-        }
-        return 0;
+        auto r = _pins_getnextall((model_t)ctx, ((int*)fsd->getData()), cb, (void *)ctx);
+//        fsd->destroy();
+        return r;
+
+//        //const typename MODELCHECKER::FullState* state = ctx->getModelChecker()->getState(ctx, s);
+//        //_pins_getnextall();
+//        for(int tg = 0; tg < this->_tgroups; ++tg) {
+////            _pins_getnext((model_t)nullptr, tg, ((int*)nullptr), nullptr, (void *)nullptr);
+//            _pins_getnext((model_t)ctx, tg, ((int*)fsd->getData()), cb, (void *)ctx);
+//        }
+//        return 0;
     }
 
     size_t getNext(StateID const& s, Context* ctx, size_t tg) override {
@@ -213,7 +217,9 @@ public:
         assert((c.len & 3) == 0 && "putting unaligned chunk");
         auto r = ctx->mc->newSubState(ctx, (size_t)(c.len / sizeof(llmc::storage::StorageInterface::StateSlot)), (llmc::storage::StorageInterface::StateSlot*)c.data);
         assert(r.getData() && "0 is not a valid chunk ID");
-//        printf("pins_chunk_put64: %zx\n", r.getData());
+//        printf("pins_chunk_put64: %zx", r.getData());
+//        if(c.data) printArray((char*)c.data, c.len);
+//        printf("\n");
         return r.getData();
     }
 
@@ -223,7 +229,10 @@ public:
 
         // TODO: this is deliberately getSubState because we do not care whether or not the chunk already exists
         auto fsd = ctx->mc->getSubState(ctx, idx);
-        assert(fsd->getLength() && "returning chunk with length 0");
+        if(!fsd->getLength()) {
+            printf("pins_chunk_get64(%u, %zx): returning chunk with length 0\n", type, idx);
+            abort();
+        }
         c.len = fsd->getLength() * sizeof(llmc::storage::StorageInterface::StateSlot);
         c.data = (decltype(c.data))fsd->getData();
         return c;
@@ -235,12 +244,12 @@ public:
         size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
         if(offset_remainder == 0 && len_remainder == 0) {
             ctx->mc->getSubStatePartial(ctx, idx, offset / sizeof(llmc::storage::StorageInterface::StateSlot), (StateSlot*)data, len / sizeof(llmc::storage::StorageInterface::StateSlot));
-//            printf("pins_chunk_getpartial64(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printf("pins_chunk_getpartial64(%u, %zx, %p, %p, %u):", type, idx, offset, data, len);
 //            printArray((char*)data, len);
 //            printf("\n");
         } else {
             pins_chunk_getpartial64_unaligned(ctx_, type, idx, offset, data, len);
-//            printf("pins_chunk_getpartial64_unaligned(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
+//            printf("pins_chunk_getpartial64_unaligned(%u, %zx, %p, %p, %u):", type, idx, offset, data, len);
 //            printArray((char*)data, len);
 //            printf("\n");
         }
@@ -262,20 +271,60 @@ public:
         size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
         size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
         if(offset_remainder == 0 && len_remainder == 0) {
-//            printf("pins_chunk_cam64(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
-//            printArray((char*)data, len);
-//            printf("\n");
+//            printf("pins_chunk_cam64(%u, %zx, %u, %p, %u):", type, idx, offset, data, len);
+//            if(data) printArray((char*)data, len);
 
 //            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
             size_t deltaOffset = offset / sizeof(llmc::storage::StorageInterface::StateSlot);
             size_t deltaLength = len / sizeof(llmc::storage::StorageInterface::StateSlot);
             auto s = ctx->mc->newSubState(ctx, idx, deltaOffset, deltaLength, (llmc::storage::StorageInterface::StateSlot*)data);
+//            printf("-> %zx\n", s.getData());
             return s.getData();
         } else {
-//            printf("pins_chunk_cam64_unaligned(%u, %zu, %p, %p, %u):", type, idx, offset, data, len);
-//            printArray((char*)data, len);
-//            printf("\n");
-            return pins_chunk_cam64_unaligned(ctx_, type, idx, offset, data, len);
+//            printf("pins_chunk_cam64_unaligned(%u, %zx, %u, %p, %u):", type, idx, offset, data, len);
+//            if(data) printArray((char*)data, len);
+            auto s = pins_chunk_cam64_unaligned(ctx_, type, idx, offset, data, len);
+//            printf("-> %zx\n", s);
+            return s;
+        }
+    }
+
+    virtual uint64_t pins_chunk_append64(void* ctx_, int type, uint64_t idx, int* data, int len) {
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        if(len_remainder == 0) {
+//            printf("pins_chunk_cam64(%u, %zx, %u, %p, %u):", type, idx, offset, data, len);
+//            if(data) printArray((char*)data, len);
+
+//            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
+            size_t deltaLength = len / sizeof(llmc::storage::StorageInterface::StateSlot);
+            auto s = ctx->mc->appendState(ctx, idx, deltaLength, (llmc::storage::StorageInterface::StateSlot*)data, false);
+//            printf("-> %zx\n", s.getData());
+            return s.getData();
+        } else {
+            abort();
+        }
+    }
+
+    virtual uint64_t dmc_state_cam(void* ctx_, int offset, int* data, int len, transition_info* tinfo) {
+        TransitionInfoUnExpanded t = TransitionInfoUnExpanded::construct(tinfo);
+        auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+
+        size_t offset_remainder = (offset & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        size_t len_remainder = (len & (sizeof(llmc::storage::StorageInterface::StateSlot) - 1));
+        if(offset_remainder == 0 && len_remainder == 0) {
+//            printf("pins_chunk_cam64(%u, %zx, %u, %p, %u):", type, idx, offset, data, len);
+//            if(data) printArray((char*)data, len);
+
+//            char buffer[sizeof(llmc::storage::StorageInterface::Delta) + len * sizeof(StateSlot)];
+            size_t deltaOffset = offset / sizeof(llmc::storage::StorageInterface::StateSlot);
+            size_t deltaLength = len / sizeof(llmc::storage::StorageInterface::StateSlot);
+            auto s = ctx->mc->newTransition(ctx, deltaOffset, deltaLength, (llmc::storage::StorageInterface::StateSlot*)data, t);
+//            printf("-> %zx\n", s.getData());
+            return s.getData();
+        } else {
+            abort();
         }
     }
 
@@ -321,8 +370,11 @@ public:
     virtual chunk pins_chunk_get(void* ctx_, int type, int idx) {
         auto ctx = reinterpret_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
         chunk c;
-        auto fsd = ctx->mc->getState(ctx, idx);
-        assert(fsd->getLength() && "returning chunk with length 0");
+        auto fsd = ctx->mc->getSubState(ctx, idx);
+        if(!fsd->getLength()) {
+            printf("pins_chunk_get %u %u returns a 0-length vector", type, idx);
+            abort();
+        }
         c.len = fsd->getLength() * sizeof(llmc::storage::StorageInterface::StateSlot);
         c.data = (decltype(c.data))fsd->getData();
 //        printf("pins_chunk_get %u:", c.len);
@@ -362,10 +414,12 @@ public:
             // TODO: We also assume labels are substates, but that seems a correct assumption
             size_t labelIndex = 0;//ctx->getModel<PINSModel>()->_labelIndex;
             if(labelIndex < ctx->getModel<PINSModel>()->_ltsType->edge_label.size()) {
-                auto fsd = ctx->mc->getSubState(ctx, *(uint64_t*)tinfo->labels);
-                if(fsd) {
-                    return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
-                } else {
+                uint64_t idx = *(uint64_t*)tinfo->labels;
+                if(idx) {
+                    auto fsd = ctx->mc->getSubState(ctx, idx);
+                    if(fsd) {
+                        return TransitionInfo(std::string(fsd->getCharData(), fsd->getLengthInBytes()));
+                    }
                 }
             }
         }

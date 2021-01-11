@@ -168,22 +168,60 @@ public:
 
     }
     InsertedState insert(StateID const& stateID, size_t offset, size_t length, const StateSlot* data, bool isRoot) {
+        size_t oldLength = 0;
+        size_t newLength = 0;
+
+        StateSlot* buffer;
+
+        if(stateID.getData()) {
+            FullState* old = get(stateID, isRoot);
+            oldLength = old->getLength();
+            LLMC_DEBUG_ASSERT(old);
+            LLMC_DEBUG_ASSERT(old->getLength());
+            newLength = std::max(oldLength, length + offset);
+            buffer = (StateSlot*)alloca(newLength * sizeof(StateSlot));
+            memcpy(buffer, old->getData(), oldLength * sizeof(StateSlot));
+        } else {
+            newLength = length + offset;
+            buffer = (StateSlot*)alloca(newLength * sizeof(StateSlot));
+            memset(buffer, 0, offset * sizeof(StateSlot));
+        }
+        if(data) {
+            memcpy(buffer+offset, data, length * sizeof(StateSlot));
+        } else {
+            memset(buffer+offset, 0, length * sizeof(StateSlot));
+        }
+        if(offset > oldLength) {
+            memset(buffer+oldLength, 0, (offset - oldLength) * sizeof(StateSlot));
+        }
+
+        return insert(buffer, newLength, isRoot);
+    }
+
+    InsertedState append(StateID const& stateID, size_t length, const StateSlot* data, bool isRoot) {
+        if(!stateID.getData()) {
+            return insert(data, length, isRoot);
+        }
         FullState* old = get(stateID, isRoot);
-                LLMC_DEBUG_ASSERT(old);
-                LLMC_DEBUG_ASSERT(old->getLength());
+        LLMC_DEBUG_ASSERT(old);
+        LLMC_DEBUG_ASSERT(old->getLength());
+        size_t offset = old->getLength();
 
         size_t newLength = std::max(old->getLength(), length + offset);
 
         StateSlot buffer[newLength];
 
         memcpy(buffer, old->getData(), old->getLength() * sizeof(StateSlot));
-        memcpy(buffer+offset, data, length * sizeof(StateSlot));
+        if(data) {
+            memcpy(buffer+offset, data, length * sizeof(StateSlot));
+        } else {
+            memset(buffer+offset, 0, length * sizeof(StateSlot));
+        }
         if(offset > old->getLength()) {
             memset(buffer+old->getLength(), 0, (offset - old->getLength()) * sizeof(StateSlot));
         }
 
         return insert(buffer, newLength, isRoot);
-
     }
 
     FullState* get(StateID id, bool isRoot) {
@@ -224,6 +262,7 @@ public:
     }
 
     void getPartial(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        abort();
         size_t length = 0;
         for(size_t p = 0; p < projection.getProjections(); ++p) {
             length += projection.getProjection(p).getLengthAndOffsets().getLength();
@@ -231,6 +270,7 @@ public:
         memset(buffer, 0, length * sizeof(uint32_t));
     }
     InsertedState delta(StateID id, MultiProjection& projection, bool isRoot, uint32_t* buffer) {
+        abort();
         return InsertedState();
     }
 

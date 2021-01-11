@@ -128,6 +128,18 @@ uint64_t pins_chunk_cam64(void* ctx_, int type, uint64_t idx, int offset, int* d
     return model->pins_chunk_cam64(ctx, type, idx, offset, data, len);
 }
 
+uint64_t pins_chunk_append64(void* ctx_, int type, uint64_t idx, int* data, int len) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    return model->pins_chunk_append64(ctx, type, idx, data, len);
+}
+
+uint64_t dmc_state_cam(void* ctx_, int offset, int* data, int len, transition_info* tinfo) {
+    auto ctx = static_cast<VContext<llmc::storage::StorageInterface>*>(ctx_);
+    auto model = static_cast<PINSModel*>(ctx->model);
+    return model->dmc_state_cam(ctx, offset, data, len, tinfo);
+}
+
 //int pins_chunk_put(void* ctx_, int type, chunk c) {
 //    auto mc = (ssgen*)ctx_;
 //    return mc->pins_chunk_put(mc, type, c);

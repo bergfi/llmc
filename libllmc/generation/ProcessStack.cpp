@@ -10,32 +10,33 @@ void ProcessStack::init() {
 }
 
 Value* ProcessStack::getEmptyStack(GenerationContext* gctx) {
-    std::string name = "emptystack_chunkid";
-    if(!gen->pinsModule->getGlobalVariable(name, true)) {
-
-        // Create global variable
-        assert(!GV_emptyStack);
-        GV_emptyStack = new GlobalVariable(*gen->pinsModule, gen->t_chunkid, false, GlobalValue::LinkageTypes::InternalLinkage, ConstantInt::get(gen->t_chunkid, 0), name);
-        assert(GV_emptyStack);
-
-        // Create an emoty stackframe with all 0's
-        ChunkMapper cm_stack(gctx, gen->type_stack);
-//        auto emptyStack = gen->builder.CreateAlloca(t_frame);
-        Value* emptyStack = gen->builder.CreateAlloca(IntegerType::get(gen->ctx, 8), gen->generateAlignedSizeOf(t_frame));
-        emptyStack = gen->builder.CreatePointerCast(emptyStack, t_frame->getPointerTo());
-        gen->builder.CreateMemSet( emptyStack
-                                , ConstantInt::get(gen->t_int8, 0)
-                                , gen->generateAlignedSizeOf(t_frame)
-                                , emptyStack->getPointerAlignment(gen->pinsModule->getDataLayout())
-                                );
-        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), emptyStack);
-
-        // Store it in the global
-        gen->builder.CreateStore(newStackChunkID, GV_emptyStack);
-    }
-
-    // Load the global
-    return gen->builder.CreateLoad(GV_emptyStack);
+//    std::string name = "emptystack_chunkid";
+//    if(!gen->pinsModule->getGlobalVariable(name, true)) {
+//
+//        // Create global variable
+//        assert(!GV_emptyStack);
+//        GV_emptyStack = new GlobalVariable(*gen->pinsModule, gen->t_chunkid, false, GlobalValue::LinkageTypes::InternalLinkage, ConstantInt::get(gen->t_chunkid, 0), name);
+//        assert(GV_emptyStack);
+//
+//        // Create an emoty stackframe with all 0's
+//        ChunkMapper cm_stack(gctx, gen->type_stack);
+////        auto emptyStack = gen->builder.CreateAlloca(t_frame);
+//        Value* emptyStack = gen->builder.CreateAlloca(IntegerType::get(gen->ctx, 8), gen->generateAlignedSizeOf(t_frame));
+//        emptyStack = gen->builder.CreatePointerCast(emptyStack, t_frame->getPointerTo());
+//        gen->builder.CreateMemSet( emptyStack
+//                                , ConstantInt::get(gen->t_int8, 0)
+//                                , gen->generateAlignedSizeOf(t_frame)
+//                                , emptyStack->getPointerAlignment(gen->pinsModule->getDataLayout())
+//                                );
+//        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), emptyStack);
+//
+//        // Store it in the global
+//        gen->builder.CreateStore(newStackChunkID, GV_emptyStack);
+//    }
+//
+//    // Load the global
+//    return gen->builder.CreateLoad(GV_emptyStack);
+    return ConstantInt::get(gen->t_chunkid, 0);
 }
 
 Value* ProcessStack::generateNewFrame(Value* oldPC, Value* rframe_chunkID, CallInst* callSite, Value* prevFrame_chunkID) {
@@ -132,19 +133,23 @@ Value* ProcessStack::getPrevStackChunkIDFromFrame(Value* frame) {
     return gen->builder.CreateLoad(prevFrameChunkID);
 }
 
-void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, CallInst* callSite) {
+void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vector<Value*> const& args, CallInst* callSite, Value* targetThreadID) {
     auto& builder = gen->builder;
+
+    if(!targetThreadID) {
+        targetThreadID = gctx->thread_id;
+    }
 
     llvmgen::BBComment(builder, "pushStackFrame");
 
-    auto dst_pc = gen->lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
-    auto dst_reg = gen->lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
+    auto dst_pc = gen->lts["processes"][targetThreadID]["pc"].getValue(gctx->svout);
+    auto dst_reg = gen->lts["processes"][targetThreadID]["r"].getValue(gctx->svout);
 
     // If this is the setup call for main or a new thread
     if(callSite == nullptr) {
 
         // Merely push an empty stack
-        auto pStackChunkID = gen->lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
+        auto pStackChunkID = gen->lts["processes"][targetThreadID]["stk"].getValue(gctx->svout);
         gen->builder.CreateStore(getEmptyStack(gctx), pStackChunkID);
 
     } else {
@@ -156,7 +161,7 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
                                               );
 
         // Create new frame
-        auto pStackChunkID = gen->lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
+        auto pStackChunkID = gen->lts["processes"][targetThreadID]["stk"].getValue(gctx->svout);
         auto stackChunkID = builder.CreateLoad(pStackChunkID, "stackChunkID");
         auto frame = generateNewFrame( gen->builder.CreateLoad(dst_pc, "pc")
                                      , chunkid
@@ -216,6 +221,7 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
 
     auto dst_pc = gen->lts["processes"][gctx->thread_id]["pc"].getValue(gctx->svout);
     auto pStackChunkID = gen->lts["processes"][gctx->thread_id]["stk"].getValue(gctx->svout);
+    auto registers = gen->lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
     auto stackChunkID = builder.CreateLoad(pStackChunkID, "stackChunkID");
 
     // Load the return value from the current registers
@@ -257,7 +263,6 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         Value* chRegLen = gen->generateChunkGetLen(chunkReg);
         Value* chRegData = gen->generateChunkGetData(chunkReg);
 
-        auto registers = gen->lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         gen->builder.CreateMemCpy( registers
                                  , registers->getPointerAlignment(gen->pinsModule->getDataLayout())
                                  , chRegData
@@ -287,12 +292,20 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         builder.SetInsertPoint(&*BBFalse->getFirstInsertionPt());
         gen->builder.CreateStore(ConstantInt::get(gen->t_int, 0), dst_pc);
 
+        // Reset registers to 0
+        builder.CreateMemSet( registers
+                , ConstantInt::get(gen->t_int8, 0)
+                , gen->t_registers_max_size
+                , registers->getPointerAlignment(gen->pinsModule->getDataLayout())
+        );
+
+
         // If there is a return value, store the result in the list of thread
         // results, such that it can be obtained later by for example pthread_join()
         if(retVal) {
 
             // Create a new tuple {tid,result}
-            auto t_tres = StructType::get(gen->ctx, {gen->t_int64, gen->t_voidp});
+            auto t_tres = StructType::get(gen->ctx, {gen->t_int64, gen->t_voidp}, true);
             auto newTres = gen->builder.CreateAlloca(t_tres);
 
             auto newTres_tid = gen->builder.CreateGEP( t_tres
@@ -323,9 +336,9 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             gen->builder.CreateStore(retValVoidP, newTres_res);
 
 //            builder.CreateCall( gen->pins("printf")
-//                    , { gen->generateGlobalString("return a value %x %u\n")
+//                    , { gen->generateGlobalString("return a value %x %p\n")
 //                      , tid
-//                      , retVal
+//                      , retValVoidP
 //                      }
 //                    );
 
@@ -340,8 +353,7 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             auto tres_p = gen->lts["tres"].getValue(gctx->svout);
             auto siz = gen->generateSizeOf(t_tres);
             auto offset = gen->builder.CreateMul(siz, tid32);
-            Value* newLength;
-            auto newListOfTRes = cm_tres.generateCloneAndModify(tres_p, offset, newTres, siz, newLength);
+            auto newListOfTRes = cm_tres.generateCloneAndModify(tres_p, offset, newTres, siz);
             gen->builder.CreateStore(newListOfTRes, tres_p);
 
         }

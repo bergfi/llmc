@@ -63,7 +63,7 @@ public:
     /**
      * The current thread_id
      */
-    int thread_id;
+    Value* thread_id;
 
     /**
      * Whether the transition group changed the PC
@@ -72,6 +72,9 @@ public:
 
     Value* cb;
     Value* userContext;
+    Value* transition_info;
+
+    BasicBlock* noReportBB;
 
     GenerationContext()
     :   gen(nullptr)
@@ -84,6 +87,8 @@ public:
     ,   alteredPC(false)
     ,   cb(nullptr)
     ,   userContext(nullptr)
+    ,   transition_info(nullptr)
+    ,   noReportBB(nullptr)
     {
     }
 };
