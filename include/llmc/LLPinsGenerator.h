@@ -195,7 +195,7 @@ public:
 //            auto v_memory_data = gctx->gen->builder.CreateLoad(memory_data, "memory_data");
 //            auto v_memory_len = gctx->gen->builder.CreateLoad(memory_len, "memory_len");
             auto memory = cm_memory.generatePut(memory_len, memory_data);
-            gctx->gen->builder.CreateStore(memory, svMemory)->setAlignment(MaybeAlign(1));
+            gctx->gen->builder.CreateStore(memory, svMemory)->setAlignment(Align(1));
         }
 
     };
@@ -260,6 +260,7 @@ public:
     llvm::BasicBlock* f_pins_getnext_end_report;
 
     llvm::IRBuilder<> builder;
+    llvm::ConstantFolder folder;
 
     std::unordered_map<Instruction*, int> programLocations;
     std::unordered_map<Value*, int> valueRegisterIndex;
@@ -629,11 +630,11 @@ public:
      * @return The size of the type.
      */
     Constant* generateSizeOf(Type* type) {
-        auto s = builder.getFolder().CreateGetElementPtr( type
+        auto s = folder.CreateGetElementPtr( type
                                                         , ConstantPointerNull::get(type->getPointerTo(0))
                                                         , {ConstantInt::get(t_int, 1)}
                                                         );
-        s = builder.getFolder().CreatePtrToInt(s, t_int);
+        s = folder.CreatePtrToInt(s, t_int);
         return s;
     }
 
@@ -648,15 +649,15 @@ public:
         return generateAlignedSizeOf(data->getType(), alignment);
     }
     Constant* generateAlignedSizeOf(Type* type, Constant* alignment) {
-        auto s = builder.getFolder().CreateGetElementPtr( type
+        auto s = folder.CreateGetElementPtr( type
                 , ConstantPointerNull::get(type->getPointerTo(0))
                 , {ConstantInt::get(t_int, 1)}
         );
-        auto al1 = builder.getFolder().CreateSub(alignment, ConstantInt::get(t_int, 1));
+        auto al1 = folder.CreateSub(alignment, ConstantInt::get(t_int, 1));
 
-        s = builder.getFolder().CreatePtrToInt(s, t_int);
-        s = builder.getFolder().CreateAdd(s, al1);
-        s = builder.getFolder().CreateAnd(s, builder.getFolder().CreateNot(al1));
+        s = folder.CreatePtrToInt(s, t_int);
+        s = folder.CreateAdd(s, al1);
+        s = folder.CreateAnd(s, folder.CreateNot(al1));
         return s;
     }
 
@@ -844,7 +845,9 @@ public:
 //                                , length
 //                                }
 //                              );
-            builder.CreateCall( cb
+            auto cbType = dyn_cast<FunctionType>(cb->getType()->getPointerElementType());
+            assert(cbType);
+            builder.CreateCall( FunctionCallee(cbType, cb)
                               , { user_context
                                 , transition_info
                                 , builder.CreatePointerCast(svout, t_intp)
@@ -1106,7 +1109,9 @@ public:
 //        }
 
 //        builder.CreateCall(pins("printf"), {generateGlobalString("Emitting PC: %u\n"), builder.CreateLoad(dst_pc)});
-        builder.CreateCall( cb
+        auto cbType = dyn_cast<FunctionType>(cb->getType()->getPointerElementType());
+        assert(cbType);
+        builder.CreateCall( FunctionCallee(cbType, cb)
                           , { user_context
                             , transition_info
                             , builder.CreatePointerCast(svout, t_intp)
@@ -1369,7 +1374,9 @@ public:
         );
         builder.CreateCall(f_constructorStart, {self, src, svout, cb, user_context, transition_info, edgeLabelValue});
         builder.CreateStore(ConstantInt::get(t_int, 1), lts["status"].getValue(svout));
-        builder.CreateCall( cb
+        auto cbType = dyn_cast<FunctionType>(cb->getType()->getPointerElementType());
+        assert(cbType);
+        builder.CreateCall( FunctionCallee(cbType, cb)
                           , { user_context
                             , transition_info
                             , builder.CreatePointerCast(svout, t_intp)
@@ -1387,7 +1394,9 @@ public:
         );
         builder.CreateCall(f_mainStart, {self, src, svout, cb, user_context, transition_info, edgeLabelValue});
         builder.CreateStore(ConstantInt::get(t_int, 3), lts["status"].getValue(svout));
-        builder.CreateCall( cb
+        cbType = dyn_cast<FunctionType>(cb->getType()->getPointerElementType());
+        assert(cbType);
+        builder.CreateCall( FunctionCallee(cbType, cb)
                           , { user_context
                             , transition_info
                             , builder.CreatePointerCast(svout, t_intp)
@@ -1477,7 +1486,7 @@ public:
     Value* generateTransition(Value* user_context, Value* offset, Value* data, Value* transition_info) {
 
         auto alloca = builder.CreateAlloca(data->getType());
-        builder.CreateStore(data, alloca)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(data, alloca)->setAlignment(Align(1));
         auto len = generateAlignedSizeOf(data->getType());
 
         return generateTransition(user_context, offset, alloca, len, transition_info);
@@ -2551,7 +2560,7 @@ public:
     Value* vReg(Value* registers, Value* reg) {
         if(auto v = dyn_cast<Instruction>(reg)) {
             Function& F = *v->getParent()->getParent();
-            return vReg(registers, F, reg->getName(), v);
+            return vReg(registers, F, reg->getName().str(), v);
         }
         if(auto v = dyn_cast<Argument>(reg)) {
             Function& F = *v->getParent();
@@ -2724,7 +2733,7 @@ public:
 //            assert(!OI->getType()->isStructTy());
             Value* registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
             auto load = builder.CreateLoad(vReg(registers, OI));
-            load->setAlignment(MaybeAlign(1));
+            load->setAlignment(Align(1));
             return load;
 
         // Otherwise, report an error
@@ -2788,7 +2797,7 @@ public:
             assert(valueRegisterIndex[I]);
             auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
             auto store = builder.CreateStore(IC, vReg(registers, I));
-            store->setAlignment(MaybeAlign(1));
+            store->setAlignment(Align(1));
             setDebugLocation(store, __FILE__, __LINE__ - 2);
 //            std::string str;
 //            raw_string_ostream strout(str);
@@ -2876,7 +2885,7 @@ public:
         auto storagePtr = generateAccessToMemory(gctx, ptr, type);
         storagePtr->setName("storagePtr");
         auto loadedPtr = builder.CreateLoad(storagePtr);
-        loadedPtr->setAlignment(MaybeAlign(1));
+        loadedPtr->setAlignment(Align(1));
         loadedPtr->setName("loaded_ptr");
 
         auto cmp = builder.CreateICmpEQ(loadedPtr, expected);
@@ -2887,7 +2896,7 @@ public:
         auto resultRegValue = builder.CreateGEP(I->getType(), resultReg, {ConstantInt::get(t_int, 0), ConstantInt::get(t_int, 0)});
         auto resultRegSuccess = builder.CreateGEP(I->getType(), resultReg, {ConstantInt::get(t_int, 0), ConstantInt::get(t_int, 1)});
 
-        builder.CreateStore(loadedPtr, resultRegValue)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(loadedPtr, resultRegValue)->setAlignment(Align(1));
         genIf.setCond(cmp);
         auto bbTrue = genIf.getTrue();
         auto bbFalse = genIf.getFalse();
@@ -2895,7 +2904,7 @@ public:
 
         builder.SetInsertPoint(&*bbTrue->getFirstInsertionPt());
         generateStore(gctx, ptr, desired, type);
-        builder.CreateStore(ConstantInt::get(t_bool, 1), resultRegSuccess)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(ConstantInt::get(t_bool, 1), resultRegSuccess)->setAlignment(Align(1));
 
 //        builder.CreateCall( pins("printf")
 //                , { generateGlobalString("[memory inst] cmpxchg \033[1m%zx\033[0m %u==%u %u: success\n")
@@ -2908,7 +2917,7 @@ public:
 
         builder.SetInsertPoint(&*bbFalse->getFirstInsertionPt());
 //        generateStore(gctx, expected_ptr, loadedPtr, type);
-        builder.CreateStore(ConstantInt::get(t_bool, 0), resultRegSuccess)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(ConstantInt::get(t_bool, 0), resultRegSuccess)->setAlignment(Align(1));
 
 //        builder.CreateCall( pins("printf")
 //                , { generateGlobalString("cmpxchg \033[1m%zx\033[0m %u!=%u %u: failure\n")
@@ -2961,8 +2970,8 @@ public:
 
         auto select = builder.CreateGEP(I->getAggregateOperand()->getType(), arg, idxs);
         auto v = builder.CreateLoad(select);
-        v->setAlignment(MaybeAlign(1));
-        builder.CreateStore(v, vReg(registers, I))->setAlignment(MaybeAlign(1));
+        v->setAlignment(Align(1));
+        builder.CreateStore(v, vReg(registers, I))->setAlignment(Align(1));
 
         auto offset = builder.CreatePtrToInt(select, t_int);
         offset = builder.CreateSub(offset, builder.CreatePtrToInt(registers, t_int));
@@ -3028,7 +3037,7 @@ public:
 
         // If this is inline assembly
         if(I->isInlineAsm()) {
-            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledValue());
+            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledOperand());
             out.reportNote("Found ASM: " + inlineAsm->getAsmString());
             assert(0);
         } else {
@@ -3043,7 +3052,7 @@ public:
             }
             if(F->isDeclaration()) {
 
-                auto it = gctx->gen->hookedFunctions.find(F->getName());
+                auto it = gctx->gen->hookedFunctions.find(F->getName().str());
 
                 // If this is a hooked function
                 if(it != gctx->gen->hookedFunctions.end()) {
@@ -3362,7 +3371,7 @@ public:
 //        auto chunkData = generateChunkGetData(chunk);
 //        auto ptr = generatePointerAdd(chunkData, modelPointer);
         auto load = builder.CreateLoad(storage);
-        load->setAlignment(MaybeAlign(1));
+        load->setAlignment(Align(1));
         return load;
     }
 
@@ -3384,7 +3393,7 @@ public:
 //        auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         if(dataPointerOrRegister->getType() == type) {
             auto v = addAlloca(type, builder.GetInsertBlock()->getParent());
-            builder.CreateStore(dataPointerOrRegister, v)->setAlignment(MaybeAlign(1));
+            builder.CreateStore(dataPointerOrRegister, v)->setAlignment(Align(1));
             dataPointerOrRegister = v;
 //            builder.CreateCall( pins("printf")
 //                    , { generateGlobalString("did an alloca %u\n"), builder.CreateLoad(dataPointerOrRegister)
@@ -3406,7 +3415,7 @@ public:
         auto offset = getOffsetPartOfPointer(modelPointer);
         auto newMem = cm_memory.generateCloneAndModify(chunkMemory, offset, dataPointerOrRegister, generateAlignedSizeOf(type));
 //        auto newMem = cm_memory.generateCloneAndModify(chunkMemory, vGetMemOffset(gctx, registers, modelPointer), dataInModelRegister, generateSizeOf(type), sv_memorylen);
-        builder.CreateStore(newMem, chunkMemory)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(newMem, chunkMemory)->setAlignment(Align(1));
     }
 
     void generateStore(GenerationContext* gctx, Value* modelPointer, Value* dataPointerOrRegister, Value* size) {
@@ -3417,7 +3426,7 @@ public:
 //        builder.CreateCall(pins("llmc_memory_check"), {modelPointer});
         auto offset = getOffsetPartOfPointer(modelPointer);
         auto newMem = cm_memory.generateCloneAndModify(chunkMemory, offset, dataPointerOrRegister, size);
-        builder.CreateStore(newMem, chunkMemory)->setAlignment(MaybeAlign(1));
+        builder.CreateStore(newMem, chunkMemory)->setAlignment(Align(1));
     }
 
 //    void generateNextStateForStoreInstruction(GenerationContext* gctx, StoreInst* I) {
@@ -3541,7 +3550,7 @@ public:
         auto registers = lts["processes"][gctx->thread_id]["r"].getValue(gctx->svout);
         Value* modelPtr = vGetMemOffset(gctx, registers, ptr);
         auto loadedValue = generateLoad(gctx, modelPtr, I->getType());
-        builder.CreateStore(loadedValue, vReg(registers, I))->setAlignment(MaybeAlign(1));
+        builder.CreateStore(loadedValue, vReg(registers, I))->setAlignment(Align(1));
         return nullptr;
     }
     Value* generateNextStateForMemoryInstruction(GenerationContext* gctx, StoreInst* I) {
@@ -3737,7 +3746,7 @@ public:
 
         // If this is inline assembly
         if(I->isInlineAsm()) {
-            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledValue());
+            auto inlineAsm = dyn_cast<InlineAsm>(I->getCalledOperand());
             out.reportNote("Found ASM: " + inlineAsm->getAsmString());
             assert(0);
             return nullptr;
@@ -3754,7 +3763,7 @@ public:
             }
             if(F->isDeclaration()) {
 
-                auto it = gctx->gen->hookedFunctions.find(F->getName());
+                auto it = gctx->gen->hookedFunctions.find(F->getName().str());
 
                 out.reportNote("Handling declaration " + F->getName().str());
 
@@ -4033,7 +4042,7 @@ public:
 //                                                , offset
 //                                        }
 //                    );
-                    builder.CreateStore(offset, vReg(registers, I))->setAlignment(MaybeAlign(1));
+                    builder.CreateStore(offset, vReg(registers, I))->setAlignment(Align(1));
 
                 } else if(F->getName().equals("pthread_create")) {
                     // int pthread_create( pthread_t *thread
@@ -5040,7 +5049,7 @@ public:
         IRBuilder<> b(f->getContext());
         b.SetInsertPoint(&*f->getEntryBlock().begin());
         auto v = b.CreateAlloca(type, size);
-        v->setAlignment(MaybeAlign(1));
+        v->setAlignment(Align(1));
         b.CreateMemSet( v
                 , ConstantInt::get(t_int8, 0)
                 , generateAlignedSizeOf(type)
@@ -5074,12 +5083,12 @@ public:
                                     , GlobalValue::LinkageTypes::ExternalLinkage
                                     , ConstantDataArray::getString(ctx, s)
                                     );
-            var->setAlignment(4);
+            var->setAlignment(Align(4));
         }
         Value* indices[2];
         indices[0] = (ConstantInt::get(t_int, 0, true));
         indices[1] = (ConstantInt::get(t_int, 0, true));
-        return builder.getFolder().CreateGetElementPtr(t, var, indices);
+        return folder.CreateGetElementPtr(t, var, indices);
     }
 
 };

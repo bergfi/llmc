@@ -19,7 +19,7 @@ target_link_libraries(llmc -Wl,-E -fPIC
     libfrugi
     dtree
     libtreedbs
-        -latomic
+        -latomic -ldl
 )
 
 include_directories(
