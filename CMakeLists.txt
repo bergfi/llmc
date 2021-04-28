@@ -1,10 +1,22 @@
-#project (llmc)
-cmake_minimum_required(VERSION 3.2)
-set (llmc_VERSION_MAJOR 0)
-set (llmc_VERSION_MINOR 1)
-set (llmc_VERSION_PATCH 0)
-
+project(llmc)
+cmake_minimum_required(VERSION 3.19)
 include(CheckIncludeFile)
+
+set (llmc_VERSION_MAJOR 0)
+set (llmc_VERSION_MINOR 2)
+set (llmc_VERSION_PATCH 0)
+set(libllmc_VERSION "${libllmc_VERSION_MAJOR}.${libllmc_VERSION_MINOR}.${libllmc_VERSION_PATCH}")
+
+set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
+set(INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")
+set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
+set(INSTALL_SYSCONFIG_DIR etc/foo CACHE PATH "Installation directory for config files")
+if(WIN32 AND NOT CYGWIN)
+    set(DEF_INSTALL_CMAKE_DIR CMake)
+else()
+    set(DEF_INSTALL_CMAKE_DIR lib/cmake/llmc)
+endif()
+set(INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH "Installation directory for CMake files")
 
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -mcx16")
 
@@ -17,62 +29,31 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_PROFILE "-pg")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g ${CMAKE_CXX_FLAGS_RELEASE}")
 
-#set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-#set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
-
-find_package(LLVM REQUIRED CONFIG)
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_FLAGS} -fno-rtti -fexceptions")
-#llvm_map_components_to_libnames(LLVM_LIBS core engine interpreter irreader)
-#set (LLVM_LIBS "LLVMCore;LLVMInterpreter;LLVMIRReader;LLVMJITLink;LLVMX86CodeGen;LLVMX86AsmParser;LLVMX86Desc;LLVMX86Disassembler;LLVMX86Info")
-#set(LLVM_LIBS "${LLVM_LIBRARIES}")
-set(LLVM_LIBS "LLVM")
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "  Using LLVMConfig.cmake in: ${LLVM_DIR}")
-message(STATUS "  - LLVM include:     ${LLVM_INCLUDE_DIRS}")
-message(STATUS "  - LLVM libs:        ${LLVM_LIBS}")
-message(STATUS "  - LLVM Definitions: ${LLVM_DEFINITIONS}")
-message(STATUS "  - LLVM Flags:       ${LLVM_FLAGS}")
-
-set(WITH_LTSMIN "" CACHE FILEPATH "Path to LTSmin install directory")
-
-include_directories(${LLVM_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
-
-# Find pins.h
-if(WITH_LTSMIN)
-    if(EXISTS "${WITH_LTSMIN}/include/ltsmin/pins.h")
-        set(CMAKE_REQUIRED_INCLUDES "${WITH_LTSMIN}/include")
-        set(LTSMIN_INCLUDE_DIRS "${WITH_LTSMIN}/include")
-    else()
-        message(SEND_ERROR "${WITH_LTSMIN} does not contain ltsmin/pins.h")
-    endif()
-else()
-    find_path(LTSMIN_INCLUDE_DIRS ltsmin/pins.h)
-endif()
-if(NOT HAVE_PINS_H)
-    check_include_file("ltsmin/pins.h" HAVE_PINS_H)
-endif()
-set(CMAKE_REQUIRED_INCLUDES)
-if(NOT HAVE_PINS_H)
-    message(SEND_ERROR "Looking for ltsmin/pins.h - not found")
-endif()
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -fno-omit-frame-pointer -fsanitize=address")
+set(CMAKE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_LINKER_FLAGS_RELWITHDEBINFO} -fno-omit-frame-pointer -fsanitize=address")
 
 add_definitions(-Wall)
 
 include_directories(
-	${CMAKE_CURRENT_BINARY_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/common
-	${CMAKE_CURRENT_SOURCE_DIR}/include
-	${CMAKE_CURRENT_SOURCE_DIR}/dtree/dtree/include
-	${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include
-	${CMAKE_CURRENT_SOURCE_DIR}/libfrugi/include
-	${CMAKE_CURRENT_SOURCE_DIR}/../httest
-	${LTSMIN_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR}/common
 )
 
-add_subdirectory(dtree)
+#target_include_directories(
+#	${CMAKE_CURRENT_BINARY_DIR}/common
+#    ${CMAKE_CURRENT_SOURCE_DIR}/common
+#	${CMAKE_CURRENT_SOURCE_DIR}/include
+#	${CMAKE_CURRENT_SOURCE_DIR}/dtree/dtree/include
+#	${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include
+#	${CMAKE_CURRENT_SOURCE_DIR}/libfrugi/include
+#	${CMAKE_CURRENT_SOURCE_DIR}/../httest
+#	${LTSMIN_INCLUDE_DIRS}
+#)
+
+#add_subdirectory(dtree)
+#add_subdirectory(dmc)
 #add_subdirectory(yaml-cpp EXCLUDE_FROM_ALL)
-add_subdirectory(libfrugi EXCLUDE_FROM_ALL)
+#add_subdirectory(libfrugi EXCLUDE_FROM_ALL)
 #add_subdirectory(bcloader EXCLUDE_FROM_ALL)
 add_subdirectory(ll2pins)
 add_subdirectory(llmc)

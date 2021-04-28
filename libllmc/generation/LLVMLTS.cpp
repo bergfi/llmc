@@ -1,22 +1,21 @@
 #include <llmc/generation/LLVMLTSType.h>
-#include <llmc/LLPinsGenerator.h>
+#include <llmc/LLDMCModelGenerator.h>
 
 namespace llmc {
 
-LLPinsGenerator* SVTree::gen() {
+LLDMCModelGenerator* SVTree::gen() {
     return manager()->gen();
 }
 
 
-SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, SVTypeManager* manager)
+SVType::SVType(std::string name, Type* llvmType, SVTypeManager* manager)
 : _name(std::move(name))
-, _ltsminType(std::move(ltsminType))
 , _llvmType(llvmType)
 {
 
     // Determine if the LLVM Type fits perfectly in a number of state
     // vector slots.
-    auto& DL = manager->gen()->pinsModule->getDataLayout();
+    auto& DL = manager->gen()->dmcModule->getDataLayout();
     assert(_llvmType->isSized() && "type is not sized");
     auto bytesNeeded = DL.getTypeSizeInBits(_llvmType) / 8;
     assert(bytesNeeded > 0 && "size is 0");
@@ -33,6 +32,20 @@ SVType::SVType(std::string name, data_format_t ltsminType, Type* llvmType, SVTyp
 }
 
 SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector<SVTree*> const& children): SVType(name, manager) {
+    std::vector<Type*> types;
+    for(auto& c: children) {
+        types.push_back(c->getLLVMType());
+    }
+
+    // Should padded be the same one?
+    // TODO: currently, we require packed because we flatten the SV such that LTSmin can cope with it
+    // In the future we can send the SV type as tree and tell them where in the flattened version the data is,
+    // such that much more information is available even when the SV is dynamically extended
+    auto structType = StructType::create(manager->gen()->ctx, types, name, false);
+    _PaddedLLVMType = _llvmType = structType;
+}
+
+SVStructType::SVStructType(std::string name, SVTypeManager* manager, std::vector<SVType*> const& children): SVType(name, manager) {
     std::vector<Type*> types;
     for(auto& c: children) {
         types.push_back(c->getLLVMType());

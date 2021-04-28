@@ -5,24 +5,24 @@
 #include <libfrugi/Settings.h>
 #include <libfrugi/Shell.h>
 #include <libfrugi/System.h>
-#include <llmc/ll2pins.h>
-#include <llmc/ssgen.h>
-#include <llmc/modelcheckers/interface.h>
-#include <llmc/modelcheckers/multicoresimple.h>
-#include <llmc/modelcheckers/singlecore.h>
-#include <llmc/modelcheckers/multicore_bitbetter.h>
-#include <llmc/statespace/listener.h>
-#include <llmc/storage/interface.h>
-#include <llmc/storage/dtree.h>
-#include <llmc/storage/dtree2.h>
-#include <llmc/storage/stdmap.h>
-#include <llmc/storage/cchm.h>
-#include <llmc/storage/treedbs.h>
-#include <llmc/storage/treedbsmod.h>
+#include <llmc/ll2dmc.h>
+//#include <llmc/ssgen.h>
+#include <dmc/modelcheckers/interface.h>
+#include <dmc/modelcheckers/multicoresimple.h>
+#include <dmc/modelcheckers/singlecore.h>
+#include <dmc/modelcheckers/multicore_bitbetter.h>
+#include <dmc/statespace/listener.h>
+#include <dmc/storage/interface.h>
+#include <dmc/storage/dtree.h>
+#include <dmc/storage/dtree2.h>
+#include <dmc/storage/stdmap.h>
+#include <dmc/storage/cchm.h>
+#include <dmc/storage/treedbs.h>
+#include <dmc/storage/treedbsmod.h>
 #include <sstream>
-#include <llmc/murmurhash.h>
+#include <dmc/common/murmurhash.h>
 
-#include <llmc/models/PINSModel.h>
+#include <dmc/models/DMCModel.h>
 #include <libllmc/LLVMModel.h>
 
 #define VERBOSITY_SEARCHING 2
@@ -82,36 +82,36 @@ bool link(File const& bin_cc, File const& input, File const& output, MessageForm
 
     out.notify("Linking...");
 
-    std::string llmcosobjectname = "libllmcos.a";
+    std::string llmcvmobjectname = "libllmcvm.a";
 
     std::vector<File> tries;
-    tries.emplace_back(File(System::getBinaryLocation(), llmcosobjectname));
-    tries.emplace_back(File(System::getBinaryLocation() + "/../libllmcos", llmcosobjectname));
-    tries.emplace_back(File(std::string(CompileOptions::CMAKE_INSTALL_PREFIX) + "/share/llmc", llmcosobjectname));
+    tries.emplace_back(System::getBinaryLocation(), llmcvmobjectname);
+    tries.emplace_back(System::getBinaryLocation() + "/../libllmcos", llmcvmobjectname);
+    tries.emplace_back(std::string(CompileOptions::CMAKE_INSTALL_PREFIX) + "/share/llmc", llmcvmobjectname);
 
-    File libLLMCOSObject;
+    File libLLMCVMObject;
     for(auto& f: tries) {
         if(f.exists()) {
-            libLLMCOSObject = f;
+            libLLMCVMObject = f;
             break;
         }
     }
 
-    if(libLLMCOSObject.isEmpty()) {
-        out.reportError("Could not find LLMC OS, tried:");
+    if(libLLMCVMObject.isEmpty()) {
+        out.reportError("Could not find LLMC VM, tried:");
         for(auto& f: tries) {
             out.reportAction2(f.getFilePath());
         }
     } else {
-        out.reportAction("Using LLMC OS [" + libLLMCOSObject.getFilePath() + "]");
+        out.reportAction("Using LLMC OS [" + libLLMCVMObject.getFilePath() + "]");
     }
 
-    // gcc -g -shared helloworld_pins.o ../../../libllmcos.o -o a.so
+    // gcc -g -shared helloworld_pins.o ../../../libllmcvm.o -o a.so
     sysOps.command = bin_cc.getFilePath()
                    + " -g -shared"
                    + " " + input.getFilePath()
                    + " -O3"
-                   + " " + libLLMCOSObject.getFilePath()
+                   + " " + libLLMCVMObject.getFilePath()
                    + " -o " + output.getFilePath()
                    ;
     sysOps.cwd = input.getPathTo();
@@ -145,21 +145,15 @@ struct HashCompareMurmur {
     }
 };
 
-void goOld(std::string soFile) {
-    model* model = model_pins_so::get(soFile);
-    assert(model);
-    ssgen_st ss(model);
-    ss.go();
-}
 
-template<typename Storage, template <typename, typename,template<typename,typename> typename> typename ModelChecker>
-void goPINS(std::string soFile) {
+template<typename Storage, template<typename,typename> typename Printer = llmc::statespace::VoidPrinter, template <typename, typename, template<typename,typename> typename> typename ModelChecker>
+void goDMC(MessageFormatter& out, std::string soFile) {
     Settings& settings = Settings::global();
 
     ofstream f;
     f.open("out.dot", std::fstream::trunc);
 
-    using MC = ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>;
+    using MC = ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, Printer>;
 
 //    PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>* model = PINSModel<ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>>::get(soFile);
 //    llmc::statespace::DotPrinter< ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter>
@@ -167,62 +161,119 @@ void goPINS(std::string soFile) {
 //                                > printer(f);
 //    ModelChecker<PINSModel, Storage, llmc::statespace::DotPrinter> mc(model, printer);
 
-    VModel<llmc::storage::StorageInterface>* model = PINSModel::get(soFile);
-    llmc::statespace::DotPrinter< MC
-                                , VModel<llmc::storage::StorageInterface>
-                                > printer(f);
-    MC mc(model, printer);
+    VModel<llmc::storage::StorageInterface>* model = DMCModel::get(soFile);
+    if(model) {
+        Printer<MC, VModel<llmc::storage::StorageInterface>> printer(f);
+        printer.init();
+        MC mc(model, printer);
 
-//    VModel<llmc::storage::StorageInterface>* model = new LLVMModel();
-//    llmc::statespace::DotPrinter< ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>
-//                                , VModel<llmc::storage::StorageInterface>
-//                                > printer(f);
-//    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
+        //    VModel<llmc::storage::StorageInterface>* model = new LLVMModel();
+        //    llmc::statespace::DotPrinter< ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter>
+        //                                , VModel<llmc::storage::StorageInterface>
+        //                                > printer(f);
+        //    ModelChecker<VModel<llmc::storage::StorageInterface>, Storage, llmc::statespace::DotPrinter> mc(model, printer);
 
-//    if constexpr(Storage::stateHasFixedLength()) {
-//        if(settings["storage.fixedvectorsize"].asUnsignedValue() > 0) {
-//            mc.getStorage().setMaxStateLength(settings["storage.fixedvectorsize"].asUnsignedValue());
-//        }
-//    }
-    mc.setSettings(settings);
-    mc.getStorage().setSettings(settings);
+        //    if constexpr(Storage::stateHasFixedLength()) {
+        //        if(settings["storage.fixedvectorsize"].asUnsignedValue() > 0) {
+        //            mc.getStorage().setMaxStateLength(settings["storage.fixedvectorsize"].asUnsignedValue());
+        //        }
+        //    }
+        mc.setSettings(settings);
+        mc.getStorage().setSettings(settings);
 
-    mc.go();
+        mc.go();
+
+        auto& endStates = mc.getEndStates();
+        if(endStates.size() > 0) {
+            std::stringstream ss;
+            ss << "End states (" << endStates.size() << ")";
+            out.reportAction(ss.str());
+            out.indent();
+            size_t endStatesError = 0;
+            Storage& storage = mc.getStorage();
+            std::vector<typename Storage::StateSlot> buffer;
+            for(auto const& s: endStates) {
+                size_t stateLength = storage.determineLength(s);
+                buffer.reserve(stateLength);
+                mc.getState(s, buffer.data(), true);
+                printer.writeEndState(model, s, Storage::FullState::createExternal(true, stateLength, buffer.data()));
+                std::stringstream sss;
+                sss << s;
+
+                // TODO: make generic
+                if(buffer.data()[6]) {
+                    endStatesError++;
+                }
+            }
+            size_t endStatesOK = endStates.size() - endStatesError;
+            if(endStatesOK) {
+                std::stringstream sss;
+                sss << endStatesOK << " end states OK (first process/thread terminated correctly)";
+                out.reportSuccess(sss.str());
+            }
+            if(endStatesError) {
+                std::stringstream sss;
+                sss << endStatesError << " end states with issues";
+                out.reportSuccess(sss.str());
+            }
+            out.outdent();
+        } else {
+            out.reportAction("No end states");
+        }
+        printer.finish();
+
+    } else {
+        out.reportError("Failed to load model");
+    }
     f.close();
 }
 
-template<template <typename, typename, template<typename,typename> typename> typename ModelChecker>
-void goSelectStorage(std::string fileName) {
+template<typename Storage, template <typename, typename, template<typename,typename> typename> typename ModelChecker>
+void goSelectPrinter(MessageFormatter& out, std::string fileName) {
     Settings& settings = Settings::global();
-
-    if(settings["storage"].asString() == "stdmap") {
-        goPINS<llmc::storage::StdMap, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "cchm") {
-        goPINS<llmc::storage::cchm, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "treedbs_stdmap") {
-        goPINS<llmc::storage::TreeDBSStorage<llmc::storage::StdMap>, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "treedbs_cchm") {
-        goPINS<llmc::storage::TreeDBSStorage<llmc::storage::cchm>, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "treedbsmod") {
-        goPINS<llmc::storage::TreeDBSStorageModified, ModelChecker>(fileName);
-    } else if(settings["storage"].asString() == "dtree") {
-        goPINS<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>, HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
-//    } else if(settings["storage"].asString() == "dtree2") {
-//        goPINS<llmc::storage::DTree2Storage<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>,SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+    if(settings["listener"].asString() == "dotall") {
+        goDMC<Storage, llmc::statespace::DotPrinter, ModelChecker>(out, fileName);
+    } else if(settings["listener"].asString() == "dotend") {
+        goDMC<Storage, llmc::statespace::DotPrinterEndOnly, ModelChecker>(out, fileName);
     } else {
+        goDMC<Storage, llmc::statespace::VoidPrinter, ModelChecker>(out, fileName);
     }
 }
 
-void go(std::string fileName) {
+template<template <typename, typename, template<typename,typename> typename> typename ModelChecker>
+void goSelectStorage(MessageFormatter& out, std::string fileName) {
+    Settings& settings = Settings::global();
+
+    if(settings["storage"].asString() == "stdmap") {
+        goSelectPrinter<llmc::storage::StdMap, ModelChecker>(out, fileName);
+    } else if(settings["storage"].asString() == "cchm") {
+        goSelectPrinter<llmc::storage::cchm, ModelChecker>(out, fileName);
+    } else if(settings["storage"].asString() == "treedbs_stdmap") {
+        goSelectPrinter<llmc::storage::TreeDBSStorage<llmc::storage::StdMap>, ModelChecker>(out, fileName);
+    } else if(settings["storage"].asString() == "treedbs_cchm") {
+        goSelectPrinter<llmc::storage::TreeDBSStorage<llmc::storage::cchm>, ModelChecker>(out, fileName);
+    } else if(settings["storage"].asString() == "treedbsmod") {
+        goSelectPrinter<llmc::storage::TreeDBSStorageModified, ModelChecker>(out, fileName);
+    } else if(settings["storage"].asString() == "dtree") {
+        goSelectPrinter<llmc::storage::DTreeStorage<SeparateRootSingleHashSet<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>, HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(out, fileName);
+//    } else if(settings["storage"].asString() == "dtree2") {
+//        goDMC<llmc::storage::DTree2Storage<HashSet128<RehasherExit, QuadLinear, HashCompareMurmur>,SeparateRootSingleHashSet<HashSet<RehasherExit, QuadLinear, HashCompareMurmur>>>, ModelChecker>(fileName);
+    } else {
+        out.reportError("No such storage component: " + settings["storage"].asString());
+    }
+}
+
+void go(MessageFormatter& out, std::string fileName) {
     Settings& settings = Settings::global();
 
     if(settings["mc"].asString() == "multicore_simple") {
-        goSelectStorage<MultiCoreModelCheckerSimple>(fileName);
+        goSelectStorage<MultiCoreModelCheckerSimple>(out, fileName);
     } else if(settings["mc"].asString() == "multicore_bitbetter") {
-        goSelectStorage<MultiCoreModelChecker>(fileName);
+        goSelectStorage<MultiCoreModelChecker>(out, fileName);
     } else if(settings["mc"].asString() == "singlecore_simple") {
-        goSelectStorage<SingleCoreModelChecker>(fileName);
+        goSelectStorage<SingleCoreModelChecker>(out, fileName);
     } else {
+        out.reportError("No such model checker: " + settings["mc"].asString());
     }
 }
 
@@ -231,8 +282,8 @@ int main(int argc, char* argv[]) {
     Settings& settings = Settings::global();
 
     settings["threads"] = 0;
-    settings["mc"] = "singlecore_simple";
-    settings["storage"] = "hashmap";
+    settings["mc"] = "multicore_bitbetter";
+    settings["storage"] = "dtree";
     settings["storage.stats"] = 0;
     settings["storage.bars"] = 128;
 
@@ -292,14 +343,14 @@ int main(int argc, char* argv[]) {
 
     File input(System::getArgument(htindex));
     input.fix();
-    File output_ll = input.newWithExtension("pins.ll");
-    File output_o = input.newWithExtension("pins.o");
+    File output_ll = input.newWithExtension("dmc.ll");
+    File output_o = input.newWithExtension("dmc.o");
     File output_so = input.newWithExtension("so");
     File output_dot = input.newWithExtension("dot");
     File output_png = input.newWithExtension("png");
 
     if(input.getFileExtension()=="so") {
-        go(input.getFileRealPath());
+        go(out, input.getFileRealPath());
         return 0;
     }
 
@@ -325,10 +376,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // .ll -> .pins.ll
-    out.reportAction("Pinsifying...");
-    if(ll2pins(input, output_ll, out)) {
-        out.reportError("Pinsifying failed");
+    // .ll -> .dmc.ll
+    out.reportAction("Translating LLVM IR...");
+    llmc::ll2dmc translator(out);
+    translator.init(input, settings.getSubSection("ll2dmc"));
+    auto r = translator.translate();
+    translator.writeTo(output_ll);
+    if(!r) {
+        out.reportError("Translation failed");
         exit(1);
     }
     if(out.getErrors()) {
@@ -336,7 +391,7 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
-    // .pins.ll -> .o
+    // .dmc.ll -> .o
     FileSystem::remove(output_o);
     if(compile(bin_llc, output_ll, output_o, out)) {
         out.reportError("Compilation failed");
@@ -363,10 +418,12 @@ int main(int argc, char* argv[]) {
 //        exit(1);
 //    }
 
-    go(output_so.getFileRealPath());
-
-    std::cout << "Model checker:   " << settings["mc"].asString() << std::endl;
-    std::cout << "Storage:         " << settings["storage"].asString() << std::endl;
+    out.reportAction("Exploring the state space using the following settings");
+    out.indent();
+    out.reportNote("search core:   " + settings["mc"].asString());
+    out.reportNote("state storage: " + settings["storage"].asString());
+    out.outdent();
+    go(out, output_so.getFileRealPath());
 
     return 0;
 }

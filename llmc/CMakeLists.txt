@@ -1,32 +1,24 @@
-project (llmc)
-
 include(CheckIncludeFileCXX)
 
 add_executable(llmc
     main.cpp
-    ssgen.cpp
-    pins/pinsWrapper.cpp
-)
+    )
 
 set_property(TARGET llmc PROPERTY CXX_STANDARD 17)
 set_property(TARGET llmc PROPERTY CXX_STANDARD_REQUIRED ON)
 
-add_dependencies(llmc dtree)
-add_dependencies(llmc libtreedbs)
+add_dependencies(llmc libllmc)
 
-target_link_libraries(llmc -Wl,-E -fPIC
-    libllmc
-    libfrugi
-    dtree
-    libtreedbs
-        -latomic -ldl
-)
+target_link_libraries(llmc
+    PUBLIC -Wl,-E -fPIC libllmc
+    )
 
-include_directories(
+target_include_directories(llmc
+    PUBLIC
     include
     ../libllmc/include
-)
+    ../dmc/include
+    ${LLVM_INCLUDE_DIRS}
+    )
 
-install (TARGETS llmc DESTINATION bin)
-
-add_subdirectory(tests)
+install(TARGETS llmc DESTINATION bin)

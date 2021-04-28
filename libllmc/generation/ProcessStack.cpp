@@ -1,5 +1,5 @@
 #include <llmc/generation/ProcessStack.h>
-#include <llmc/LLPinsGenerator.h>
+#include <llmc/LLDMCModelGenerator.h>
 
 namespace llmc {
 
@@ -11,11 +11,11 @@ void ProcessStack::init() {
 
 Value* ProcessStack::getEmptyStack(GenerationContext* gctx) {
 //    std::string name = "emptystack_chunkid";
-//    if(!gen->pinsModule->getGlobalVariable(name, true)) {
+//    if(!gen->dmcModule->getGlobalVariable(name, true)) {
 //
 //        // Create global variable
 //        assert(!GV_emptyStack);
-//        GV_emptyStack = new GlobalVariable(*gen->pinsModule, gen->t_chunkid, false, GlobalValue::LinkageTypes::InternalLinkage, ConstantInt::get(gen->t_chunkid, 0), name);
+//        GV_emptyStack = new GlobalVariable(*gen->dmcModule, gen->t_chunkid, false, GlobalValue::LinkageTypes::InternalLinkage, ConstantInt::get(gen->t_chunkid, 0), name);
 //        assert(GV_emptyStack);
 //
 //        // Create an emoty stackframe with all 0's
@@ -26,7 +26,7 @@ Value* ProcessStack::getEmptyStack(GenerationContext* gctx) {
 //        gen->builder.CreateMemSet( emptyStack
 //                                , ConstantInt::get(gen->t_int8, 0)
 //                                , gen->generateAlignedSizeOf(t_frame)
-//                                , emptyStack->getPointerAlignment(gen->pinsModule->getDataLayout())
+//                                , emptyStack->getPointerAlignment(gen->dmcModule->getDataLayout())
 //                                );
 //        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), emptyStack);
 //
@@ -155,10 +155,8 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
     } else {
 
         // Create new register frame chunk containing the current register values
-        ChunkMapper cm_rframe(gctx, gen->type_register_frame);
-        Value* chunkid = cm_rframe.generatePut( gen->t_registers_max_size
-                                              , dst_reg
-                                              );
+        StateManager sm_rframe(gctx->userContext, gen, gen->type_register_frame);
+        Value* chunkid = sm_rframe.uploadBytes(dst_reg, gen->t_registers_max_size);
 
         // Create new frame
         auto pStackChunkID = gen->lts["processes"][targetThreadID]["stk"].getValue(gctx->svout);
@@ -170,8 +168,8 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
                                      );
 
         // Put the new frame on the stack
-        ChunkMapper cm_stack(gctx, gen->type_stack);
-        auto newStackChunkID = cm_stack.generatePut(gen->generateAlignedSizeOf(t_frame), frame);
+        StateManager sm_stack(gctx->userContext, gen, gen->type_stack);
+        auto newStackChunkID = sm_stack.uploadBytes(frame, gen->generateAlignedSizeOf(t_frame));
         gctx->gen->setDebugLocation(newStackChunkID, __FILE__, __LINE__ - 1);
         gen->builder.CreateStore(newStackChunkID, pStackChunkID);
 
@@ -179,7 +177,7 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
 
     // Check if the number of arguments is correct
     // Too few arguments results in 0-values for the later parameters
-    if(args.size() > F.arg_size()) {
+    if(!F.isVarArg() && args.size() > F.arg_size()) {
         std::cout << "calling function with too many arguments" << std::endl;
         std::cout << "  #arguments: " << args.size() << std::endl;
         std::cout << "  #params: " << F.arg_size() << std::endl;
@@ -207,6 +205,85 @@ void ProcessStack::pushStackFrame(GenerationContext* gctx, Function& F, std::vec
     auto loc = gen->programLocations[&*F.getEntryBlock().begin()];
     assert(loc);
     gen->builder.CreateStore(ConstantInt::get(gen->t_int, loc), dst_pc);
+//    builder.CreateCall( gen->pins("printf")
+//            , { gen->generateGlobalString("Call: jumping to %u\n")
+//                                , ConstantInt::get(gen->t_int, loc)
+//                        }
+//    );
+}
+
+void ProcessStack::pushStackFrame(GenerationContext* gctx, FunctionType* FType, Value* location, std::vector<Value*> const& args, CallInst* callSite, Value* targetThreadID) {
+    auto& builder = gen->builder;
+
+    if(!targetThreadID) {
+        targetThreadID = gctx->thread_id;
+    }
+
+    assert(location->getType()->isIntegerTy(64));
+    location = builder.CreateIntCast(location, gen->t_int, false);
+
+    llvmgen::BBComment(builder, "pushStackFrame");
+
+    auto dst_pc = gen->lts["processes"][targetThreadID]["pc"].getValue(gctx->svout);
+    auto dst_reg = gen->lts["processes"][targetThreadID]["r"].getValue(gctx->svout);
+
+    // If this is the setup call for main or a new thread
+    if(callSite == nullptr) {
+
+        // Merely push an empty stack
+        auto pStackChunkID = gen->lts["processes"][targetThreadID]["stk"].getValue(gctx->svout);
+        gen->builder.CreateStore(getEmptyStack(gctx), pStackChunkID);
+
+    } else {
+
+        // Create new register frame chunk containing the current register values
+        StateManager sm_rframe(gctx->userContext, gen, gen->type_register_frame);
+        Value* chunkid = sm_rframe.uploadBytes(dst_reg, gen->t_registers_max_size);
+
+        // Create new frame
+        auto pStackChunkID = gen->lts["processes"][targetThreadID]["stk"].getValue(gctx->svout);
+        auto stackChunkID = builder.CreateLoad(pStackChunkID, "stackChunkID");
+        auto frame = generateNewFrame( gen->builder.CreateLoad(dst_pc, "pc")
+                , chunkid
+                , callSite
+                , stackChunkID
+        );
+
+        // Put the new frame on the stack
+        StateManager sm_stack(gctx->userContext, gen, gen->type_stack);
+        auto newStackChunkID = sm_stack.uploadBytes(frame, gen->generateAlignedSizeOf(t_frame));
+        gctx->gen->setDebugLocation(newStackChunkID, __FILE__, __LINE__ - 1);
+        gen->builder.CreateStore(newStackChunkID, pStackChunkID);
+
+    }
+
+    // Check if the number of arguments is correct
+    // Too few arguments results in 0-values for the later parameters
+    if(!FType->isFunctionVarArg() && args.size() > FType->getNumParams()) {
+        std::cout << "calling function with too many arguments" << std::endl;
+        std::cout << "  #arguments: " << args.size() << std::endl;
+        std::cout << "  #params: " << FType->getNumParams() << std::endl;
+        assert(0);
+    }
+
+    // Assign the arguments to the parameters
+    int param = 0;
+    for(auto& arg: args) {
+
+        // Map the parameter register to the location in the state vector
+        auto vParam = gen->vReg(dst_reg, FType, "direct", ConstantInt::get(gen->t_int, param));
+        vParam = gen->builder.CreatePointerCast(vParam, arg->getType()->getPointerTo(0));
+
+        // Perform the store
+        gen->builder.CreateStore(arg, vParam);
+
+        // Next
+        param++;
+    }
+
+    // Set the program counter to the start of the pushed function
+    assert(location);
+    gen->builder.CreateStore(location, dst_pc);
 //    builder.CreateCall( gen->pins("printf")
 //            , { gen->generateGlobalString("Call: jumping to %u\n")
 //                                , ConstantInt::get(gen->t_int, loc)
@@ -243,9 +320,8 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         builder.SetInsertPoint(&*BBTrue->getFirstInsertionPt());
 
         // Get the stack
-        ChunkMapper cm_stack(gctx, gen->type_stack);
-        Value* chunk = cm_stack.generateGet(stackChunkID);
-        Value* chData = gen->generateChunkGetData(chunk);
+        StateManager sm_stack(gctx->userContext, gen, gen->type_stack);
+        Value* chData = sm_stack.download(stackChunkID);
 
         // Pop the last frame from the stack by merely using the chunkID of
         // the precious stackframe
@@ -258,15 +334,14 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         // Restore stored registers
         auto prevRegsChunkID = getPrevRegisterChunkIDFrame(chData);
 
-        ChunkMapper cm_rframe(gctx, gen->type_register_frame);
-        Value* chunkReg = cm_rframe.generateGet(prevRegsChunkID);
-        Value* chRegLen = gen->generateChunkGetLen(chunkReg);
-        Value* chRegData = gen->generateChunkGetData(chunkReg);
+        StateManager sm_rframe(gctx->userContext, gen, gen->type_register_frame);
+        Value* chRegData = sm_rframe.download(prevRegsChunkID);
+        Value* chRegLen = gen->getLengthOfStateID(prevRegsChunkID);
 
         gen->builder.CreateMemCpy( registers
-                                 , registers->getPointerAlignment(gen->pinsModule->getDataLayout())
+                                 , registers->getPointerAlignment(gen->dmcModule->getDataLayout())
                                  , chRegData
-                                 , chRegData->getPointerAlignment(gen->pinsModule->getDataLayout())
+                                 , chRegData->getPointerAlignment(gen->dmcModule->getDataLayout())
                                  , chRegLen
                                  );
 
@@ -296,7 +371,7 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         builder.CreateMemSet( registers
                 , ConstantInt::get(gen->t_int8, 0)
                 , gen->t_registers_max_size
-                , registers->getPointerAlignment(gen->pinsModule->getDataLayout())
+                , registers->getPointerAlignment(gen->dmcModule->getDataLayout())
         );
 
 
@@ -305,7 +380,7 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
         if(retVal) {
 
             // Create a new tuple {tid,result}
-            auto t_tres = StructType::get(gen->ctx, {gen->t_int64, gen->t_voidp}, true);
+            auto t_tres = gen->type_threadresults_element->getLLVMType();
             auto newTres = gen->builder.CreateAlloca(t_tres);
 
             auto newTres_tid = gen->builder.CreateGEP( t_tres
@@ -332,28 +407,14 @@ void ProcessStack::popStackFrame(GenerationContext* gctx, ReturnInst* result) {
             if(retVal->getType()->isIntegerTy()) retValVoidP = builder.CreateIntToPtr(retVal, gen->t_voidp);
             else if(retVal->getType()->isPointerTy()) retValVoidP = builder.CreatePointerCast(retVal, gen->t_voidp);
             else retValVoidP = ConstantPointerNull::get(gen->t_voidp);
-
             gen->builder.CreateStore(retValVoidP, newTres_res);
 
-//            builder.CreateCall( gen->pins("printf")
-//                    , { gen->generateGlobalString("return a value %x %p\n")
-//                      , tid
-//                      , retValVoidP
-//                      }
-//                    );
-
-            // Append the new tuple to the list of tuples
-            // OLD STYLE: this is using appending, but we will do array-style setting instead using the ID as index
-//            ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);
-//            auto tres_p = gen->lts["tres"].getValue(gctx->svout);
-//            auto newListOfTRes = cm_tres.generateCloneAndAppend(tres_p, newTres, gen->generateSizeOf(t_tres));
-//            gen->builder.CreateStore(newListOfTRes, tres_p);
-
-            ChunkMapper cm_tres = ChunkMapper(gctx, gen->type_threadresults);
+            StateManager sm_tres = StateManager(gctx->userContext, gen, gen->type_threadresults);
             auto tres_p = gen->lts["tres"].getValue(gctx->svout);
+            auto tres = gen->builder.CreateLoad(tres_p);
             auto siz = gen->generateSizeOf(t_tres);
             auto offset = gen->builder.CreateMul(siz, tid32);
-            auto newListOfTRes = cm_tres.generateCloneAndModify(tres_p, offset, newTres, siz);
+            auto newListOfTRes = sm_tres.deltaBytes(tres, offset, siz, newTres);
             gen->builder.CreateStore(newListOfTRes, tres_p);
 
         }

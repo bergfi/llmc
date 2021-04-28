@@ -1,109 +1,117 @@
-#include <assert.h>
-#include <inttypes.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <stdarg.h>
 #include <stdlib.h>
-#include <ltsmin/pins.h>
-#include <ltsmin/pins-util.h>
 
+__attribute__((weak))
+void* __LLMCOS_Object_New(size_t bytes);
 
-typedef struct {
-    __int64_t size;
-    __int64_t start;
-} __attribute((packed)) memory_info;
+__attribute__((weak))
+void __LLMCOS_UnsafeOperation(int type);
 
-const int START_BYTES = 8;
+__attribute__((weak))
+void __LLMCOS_Object_CheckAccess(const void * ptr, size_t bytes);
 
-__int32_t llmc_os_memory_malloc(char* data, __int32_t bytes);
+__attribute__((weak))
+void __LLMCOS_Object_CheckInRange(const void * ptr, const void * range_start, size_t range_bytes);
 
-void llmc_os_memory_init(void* ctx, int data_typeno, __int64_t* ci_data, __int32_t globalBytes) {
-    chunk c_data;
+__attribute__((weak))
+void __LLMCOS_Object_CheckNotOverlapping(const void* ptr1, void* ptr2, size_t bytes);
 
-    char a[START_BYTES];
-    memset(a, 0, START_BYTES);
-    llmc_os_memory_malloc(a, globalBytes);
+__attribute__((weak))
+void __LLMCOS_Fatal(const char * assertion, const char * file, unsigned int line, const char * function);
 
-    c_data.len = START_BYTES;
-    c_data.data = a;
-    *ci_data = pins_chunk_put64(ctx, data_typeno, c_data);
-//    printf("[LLMC OS] Initialized memory to %u bytes (chunk ID: %zx)\n", c_data.len, *ci_data);
-    fflush(stdout);
+__attribute__((weak))
+void __LLMCOS_Warning(int once, const char* message);
+
+__attribute__((weak))
+int __LLMCOS_Thread_New(pthread_t* thread, void *(*start_routine) (void *), void *arg);
+
+__attribute__((weak))
+int __LLMCOS_Thread_Join(pthread_t thread, void** retval);
+
+__attribute__((weak))
+int __LLMCOS_Annotate(const char * format, ... );
+
+__attribute__((weak))
+void __LLMCOS_Assert_Fatal(int condition, const char * assertion, const char * file, unsigned int line, const char * function);
+
+void* malloc(size_t bytes) {
+    return __LLMCOS_Object_New(bytes);
+}
+void* calloc(size_t num, size_t size) {
+    return __LLMCOS_Object_New(num * size);
 }
 
-__int32_t llmc_os_memory_malloc(char* data, __int32_t bytes) {
-    int* d = (int*)data;
-    int current = *d;
-    *((int*)d) += bytes;
-//    printf("[LLMC OS] Allocated %u bytes @ %x\n", bytes, current + START_BYTES);
-    return current + START_BYTES;
-}
-
-void llmc_print_chunk(char* data, int len) {
-    char* data_end = data + len;
-    while(data < data_end) {
-        printf(" %x", *data);
-        data++;
-    }
-}
-
-void llmc_hook___assert_fail(char* message, char* file, int line, char* x) {
-    printf("[LLMC OS] ASSERT FAILED[%s:%i]: %s\n", file, line, message);
-}
-
-void llmc_hook_printf(char* str, ...) {
-    va_list(args);
-    va_start(args, str);
-    vprintf(str, args);
-}
-
-//void llmc_hook_fflush(FILE* file) {
+//int memcmp ( const void * ptr1, const void * ptr2, size_t num ) {
+//    __LLMCOS_Object_CheckAccess(ptr1, num);
+//    __LLMCOS_Object_CheckAccess(ptr2, num);
+//    const char* ptr1_ = ptr1;
+//    const char* ptr2_ = ptr2;
+//    const char* ptr1end = ptr1_ + num;
+//    while(ptr1_ < ptr1end) {
+//        char v = *ptr2_++ - *ptr1_++;
+//        if(v) {
+//            return v;
+//        }
+//    }
+//    return 0;
 //}
 
-typedef struct {
-    __uint64_t key;
-    void* val;
-} list_entry;
+//void * memcpy ( void * destination, const void * source, size_t num ) {
+//    __LLMCOS_Object_CheckAccess(destination, num);
+//    __LLMCOS_Object_CheckAccess(source, num);
+//    __LLMCOS_Object_CheckNotOverlapping(destination, source, num);
+//    char* d = destination;
+//    const char* s = source;
+//    char* dend = d + num;
+//    while(d < dend) {
+//        *d++ = *s++;
+//    }
+//    return 0;
+//}
 
-int llmc_list_find(void* list, int len, __uint64_t key, void** val) {
-    list_entry* m = (list_entry*)list;
-    list_entry* me = m + len/sizeof(list_entry);
-//    printf("[list:%p,%i] looking for %x\n", list, len, key);
-    while(m < me) {
-//        printf("  - %x\n", m->key);
-        if(m->key == key) {
-//            printf("    -> %x\n", m->val);
-            if(val) *val = m->val;
-            return 1;
-        }
-        ++m;
-    }
-    return 0;
+//void * memmove ( void * destination, const void * source, size_t num ) {
+//    __LLMCOS_Object_CheckAccess(destination, num);
+//    __LLMCOS_Object_CheckAccess(source, num);
+//    char* d = destination;
+//    const char* s = source;
+//    char* dend = d + num;
+//    if(d < s) {
+//        while(d < dend) {
+//            *d++ = *s++;
+//        }
+//    } else {
+//        const char* send = s + num;
+//        while(d < dend) {
+//            *dend-- = *send--;
+//        }
+//
+//    }
+//    return 0;
+//}
+
+void __assert_fail(const char * assertion, const char * file, unsigned int line, const char * function) {
+    __LLMCOS_Fatal(assertion, file, line, function);
 }
 
-int llmc_memcmp(char* one, char* other, size_t size) {
-    char* oneI = one;
-    char* oneE = one + size;
-    printf("one:   ");
-    while(oneI < oneE) {
-        printf(" %x", *oneI);
-        oneI++;
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg) {
+    if(attr) {
+        __LLMCOS_Warning(1, "pthread_create called with attr, ignoring");
     }
-    printf("\n");
-    char* otherI = other;
-    char* otherE = other + size;
-    printf("other: ");
-    while(otherI < otherE) {
-        printf(" %x", *otherI);
-        otherI++;
-    }
-    printf("\n");
-    int r = memcmp(one, other, size);
-    printf("r: %zu", size);
+    return __LLMCOS_Thread_New(thread, start_routine, arg);
+}
+
+int pthread_join(pthread_t thread, void **retval) {
+    // TODO: implement
+    return __LLMCOS_Thread_Join(thread, retval);
+}
+
+int printf ( const char * format, ... ) {
+    va_list argptr;
+    va_start(argptr,format);
+    int r = __LLMCOS_Annotate(format, argptr);
+    va_end(argptr);
     return r;
-}
-
-int llmc_memory_check(size_t memAccess) {
-    if(!memAccess) {
-        abort();
-    }
-    return 0;
 }

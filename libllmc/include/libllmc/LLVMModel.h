@@ -1,6 +1,6 @@
 #pragma once
 
-#include <llmc/model.h>
+#include <dmc/model.h>
 
 class LLVMModel: public VModel<llmc::storage::StorageInterface> {
 public:
@@ -32,9 +32,10 @@ public:
         return state->getLength();
     }
 
-    StateID getInitial(Context* ctx) override {
+    size_t getInitial(Context* ctx) override {
         StateSlot d[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-        return ctx->getModelChecker()->newState(ctx, 0, sizeof(d)/sizeof(*d), d).getState();
+        ctx->getModelChecker()->newState(ctx, 0, sizeof(d)/sizeof(*d), d).getState();
+        return 1;
     }
 
     llmc::statespace::Type* getStateVectorType() override {
