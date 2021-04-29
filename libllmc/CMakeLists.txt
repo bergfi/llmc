@@ -17,7 +17,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     dmc
     GIT_REPOSITORY https://github.com/bergfi/dmc.git
-    GIT_TAG ee509890076baea158432907de36a0331ffd2640
+    GIT_TAG 28a4303673fcef871e61e0e7d6badc3b45e53f96
 )
 
 FetchContent_MakeAvailable(libfrugi dtree dmc)

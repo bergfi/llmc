@@ -304,7 +304,6 @@ int main(int argc, char* argv[]) {
     if(findBinary("gcc", out, bin_cc)) {
         findBinary("clang", out, bin_cc);
     }
-    findBinary("pins2lts-seq", out, bin_ltsmin);
     findBinary("dot", out, bin_dot);
 
     // init libfrugi
