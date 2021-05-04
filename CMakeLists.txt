@@ -10,7 +10,7 @@ set(libllmc_VERSION "${libllmc_VERSION_MAJOR}.${libllmc_VERSION_MINOR}.${libllmc
 set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
 set(INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")
 set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
-set(INSTALL_SYSCONFIG_DIR etc/foo CACHE PATH "Installation directory for config files")
+
 if(WIN32 AND NOT CYGWIN)
     set(DEF_INSTALL_CMAKE_DIR CMake)
 else()
@@ -39,23 +39,7 @@ include_directories(
     ${CMAKE_CURRENT_BINARY_DIR}/common
 )
 
-#target_include_directories(
-#	${CMAKE_CURRENT_BINARY_DIR}/common
-#    ${CMAKE_CURRENT_SOURCE_DIR}/common
-#	${CMAKE_CURRENT_SOURCE_DIR}/include
-#	${CMAKE_CURRENT_SOURCE_DIR}/dtree/dtree/include
-#	${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include
-#	${CMAKE_CURRENT_SOURCE_DIR}/libfrugi/include
-#	${CMAKE_CURRENT_SOURCE_DIR}/../httest
-#	${LTSMIN_INCLUDE_DIRS}
-#)
-
-#add_subdirectory(dtree)
-#add_subdirectory(dmc)
-#add_subdirectory(yaml-cpp EXCLUDE_FROM_ALL)
-#add_subdirectory(libfrugi EXCLUDE_FROM_ALL)
-#add_subdirectory(bcloader EXCLUDE_FROM_ALL)
-add_subdirectory(ll2pins)
+add_subdirectory(ll2dmc)
 add_subdirectory(llmc)
 add_subdirectory(libllmc)
 add_subdirectory(libllmcos)

@@ -18,10 +18,6 @@
 #include <libfrugi/MessageFormatter.h>
 #include <libfrugi/FileSystem.h>
 #include <libfrugi/System.h>
-//extern "C" {
-//#include <ltsmin/pins.h>
-//#include <ltsmin/pins-util.h>
-//}
 
 #include <llmc/generation/StateManager.h>
 #include <llmc/generation/GenerationContext.h>
@@ -31,11 +27,8 @@
 
 #include "llvmgen.h"
 
-extern "C" {
-#include "popt.h"
-}
-
 using namespace llvm;
+using namespace libfrugi;
 
 namespace llmc {
 
@@ -428,7 +421,6 @@ public:
         generateMainStart();
         generateGetNextAllDMC();
 
-        // Generate Popt interfacee
         generateInterface();
 
         generateDebugInfo();

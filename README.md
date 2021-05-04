@@ -18,14 +18,15 @@ Dependencies are downloaded during configuration unless specified otherwise.
 
 ```
 mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LLVM=1
 make -j 4
 ```
-To use the dependencies of DMC at specific location, use
 
-```
-cmake .. -DFETCHCONTENT_SOURCE_DIR_DMC=/path/to/dmc -DFETCHCONTENT_SOURCE_DIR_DTREE=/path/to/dtree -DFETCHCONTENT_SOURCE_DIR_LIBFRUGI=/path/to/libfrugi
-```
+CMake options:
+- `-DFETCHCONTENT_SOURCE_DIR_DMC=/path/to/dmc`: use DMC source at the specified location
+- `-DFETCHCONTENT_SOURCE_DIR_DTREE=/path/to/dtree`: use DTREE source at the specified location
+- `-DFETCHCONTENT_SOURCE_DIR_LIBFRUGI=/path/to/libfrugi`: use libfrugi source at the specified location
+- `-DUSE_SYSTEM_LLVM=N`: N=1 means to use the LLVM libraries of the system; N=0 means LLVM will be downloaded and compiled.
 
 # Usage
 

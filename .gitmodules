@@ -1,6 +1,0 @@
-#[submodule "libfrugi"]
-#	path = libfrugi
-#	url = https://github.com/bergfi/libfrugi.git
-[submodule "libfrugi"]
-	path = libfrugi
-	url = https://github.com/bergfi/libfrugi.git

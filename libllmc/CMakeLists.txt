@@ -7,7 +7,7 @@ include(ExternalProject)
 FetchContent_Declare(
     libfrugi
     GIT_REPOSITORY https://github.com/bergfi/libfrugi.git
-    GIT_TAG 93deb6ad08818c99d4a2ddf520f12527bb3dd542
+    GIT_TAG f6b312ed67fb2b316bce6107a4ebcfae8f6eecb2
 )
 FetchContent_Declare(
     dtree
@@ -17,7 +17,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     dmc
     GIT_REPOSITORY https://github.com/bergfi/dmc.git
-    GIT_TAG 28a4303673fcef871e61e0e7d6badc3b45e53f96
+    GIT_TAG 9f9ae91e282f63100eb756d96ab0bd378a7aa0fb
 )
 
 FetchContent_MakeAvailable(libfrugi dtree dmc)
