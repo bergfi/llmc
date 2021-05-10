@@ -7,17 +7,17 @@ include(ExternalProject)
 FetchContent_Declare(
     libfrugi
     GIT_REPOSITORY https://github.com/bergfi/libfrugi.git
-    GIT_TAG f6b312ed67fb2b316bce6107a4ebcfae8f6eecb2
+    GIT_TAG 6dce992af08f56b8d20f4612ec86dbb45300e631
 )
 FetchContent_Declare(
     dtree
     GIT_REPOSITORY https://github.com/bergfi/dtree.git
-    GIT_TAG 861f50b642bc4b1cd6af6d60d91be68e2b77b7dc
+    GIT_TAG 7335c0afe236e78bee9f455870a7d7692dc6b852
 )
 FetchContent_Declare(
     dmc
     GIT_REPOSITORY https://github.com/bergfi/dmc.git
-    GIT_TAG 9f9ae91e282f63100eb756d96ab0bd378a7aa0fb
+    GIT_TAG 5fbd206ae638341a02c3c12c652241614a092522
 )
 
 FetchContent_MakeAvailable(libfrugi dtree dmc)
@@ -130,7 +130,7 @@ target_compile_definitions(libllmc
     )
 
 target_link_libraries(libllmc
-    PUBLIC -Wl,-E -fPIC ${FFI_LIBRARY} ${LLVM_LIBS} tinfo libdmc libfrugi
+    PUBLIC ${FFI_LIBRARY} ${LLVM_LIBS} tinfo libdmc libfrugi
     -udmc_insert
     -udmc_insertB
     -udmc_transition

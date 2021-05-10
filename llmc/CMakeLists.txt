@@ -6,11 +6,12 @@ add_executable(llmc
 
 set_property(TARGET llmc PROPERTY CXX_STANDARD 17)
 set_property(TARGET llmc PROPERTY CXX_STANDARD_REQUIRED ON)
+set_property(TARGET llmc PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_dependencies(llmc libllmc)
 
 target_link_libraries(llmc
-    PUBLIC -Wl,-E -fPIC libllmc
+    PUBLIC libllmc
     )
 
 target_include_directories(llmc

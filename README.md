@@ -7,7 +7,7 @@ DMC Model Checker [2] is a modular multi-threaded model checker with a model-agn
 # Dependencies
 
 LLMC depends on:
-- [dtree](https://github.com/bergfi/dtree), a modular multi-core model checker [2]
+- [dtree](https://github.com/bergfi/dtree), a concurrent compression tree for variable-length vectors
 - [DMC](https://github.com/bergfi/dmc), a modular multi-core model checker [2]
 - [libfrugi](https://github.com/bergfi/libfrugi), a general-purpose library
 - [LLVM](https://github.com/llvm/llvm-project.git), a collection of modular and reusable compiler and toolchain technologies [3]
@@ -44,3 +44,20 @@ References:
 - [1] van der Berg, F. I. (2021) LLMC: Verifying High-performance Software. TBD.
 - [2] van der Berg, F. I. (2021) Recursive Variable-Length State Compression for Multi-Core Software Model Checking. 2021 NASA Formal Methods. Preprint.
 - [3] https://llvm.org/
+
+# License
+
+LLMC - LLVM IR Model Checker
+Copyright © 2013-2021 Freark van der Berg
+
+LLMC is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 of the License.
+
+LLMC is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with LLMC.  If not, see <https://www.gnu.org/licenses/>.
