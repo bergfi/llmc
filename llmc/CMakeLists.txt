@@ -11,7 +11,7 @@ set_property(TARGET llmc PROPERTY POSITION_INDEPENDENT_CODE ON)
 add_dependencies(llmc libllmc)
 
 target_link_libraries(llmc
-    PUBLIC libllmc
+    PUBLIC -Wl,-E libllmc
     )
 
 target_include_directories(llmc

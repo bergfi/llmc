@@ -9,7 +9,7 @@ set_property(TARGET ll2dmc PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET ll2dmc PROPERTY CXX_STANDARD 14)
 set_property(TARGET ll2dmc PROPERTY CXX_STANDARD_REQUIRED ON)
 
-target_link_libraries(ll2dmc PUBLIC
+target_link_libraries(ll2dmc PUBLIC -Wl,-E
     libllmc
     libfrugi
 )

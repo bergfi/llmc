@@ -130,7 +130,7 @@ target_compile_definitions(libllmc
     )
 
 target_link_libraries(libllmc
-    PUBLIC ${FFI_LIBRARY} ${LLVM_LIBS} tinfo libdmc libfrugi
+    PUBLIC -Wl,-E ${FFI_LIBRARY} ${LLVM_LIBS} tinfo libdmc libfrugi
     -udmc_insert
     -udmc_insertB
     -udmc_transition
