@@ -1,3 +1,5 @@
+![CMake result](https://github.com/bergfi/dmc/actions/workflows/master.yml/badge.svg)
+
 # LLMC Model Checker
 
 LLMC [1] is a multi-core model checker of LLVM IR. It translates the input LLVM IR into a model LLVM IR that implements the DMC API, the API of the model checker DMC. This allows LLMC to execute the model's next-state function, instead of interpreting the input LLVM IR, enabling speedups of orders of magnitude.
