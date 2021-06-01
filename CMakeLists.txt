@@ -1,11 +1,11 @@
-project(llmc)
 cmake_minimum_required(VERSION 3.19)
+project(llmc)
 include(CheckIncludeFile)
 
 set (llmc_VERSION_MAJOR 0)
 set (llmc_VERSION_MINOR 2)
 set (llmc_VERSION_PATCH 0)
-set(libllmc_VERSION "${libllmc_VERSION_MAJOR}.${libllmc_VERSION_MINOR}.${libllmc_VERSION_PATCH}")
+set(llmc_VERSION "${llmc_VERSION_MAJOR}.${llmc_VERSION_MINOR}.${llmc_VERSION_PATCH}")
 
 set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
 set(INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")

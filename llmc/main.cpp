@@ -296,6 +296,56 @@ void go(MessageFormatter& out, std::string fileName) {
     }
 }
 
+void printHelp(MessageFormatter& out) {
+    out.notify("llmc [options] [input LLVM IR file]");
+    out.message("    A stateful multi-core model checker of LLVM IR.");
+    out.message("");
+    out.notify ("General Options:");
+    out.message("  -h, --help                  Show this help.");
+    out.message("  --color                     Use colored messages.");
+    out.message("  --no-color                  Do not use colored messages.");
+    out.message("  --version                   Print version info and quit.");
+    out.message("");
+    out.notify ("Debug Options:");
+    out.message("  --verbose=x                 Set verbosity to x, -1 <= x <= 5.");
+    out.message("  -v, --verbose               Increase verbosity. Up to 5 levels.");
+    out.message("  -q                          Decrease verbosity.");
+    out.message("");
+    out.notify("DMC Model Checker Options:");
+    out.message("  -m MC, --mc MC              Use MC model checker. Options for MC: ");
+    out.message("                                - singlecore_simple: simple, single-core");
+    out.message("                                - multicore_simple: multi-core, single-queue");
+    out.message("                                > multicore_bitbetter: multi-core, work-sharing");
+    out.message("  -s S, --storage S           Use S state storage. Options for S: ");
+    out.message("                                > dtree: DTree compression tree");
+    out.message("                                - treedbsmod: TreeDBS tree, states padded");
+    out.message("                                - treedbs_cchm: TreeDBS + CCHM");
+    out.message("                                - cchm: Concurrent Chaining Hash Map");
+    out.message("                                - stdmap: std::unordered_map");
+    out.message("  -t T, --threads T           Use T threads to model check, 0 for auto, default");
+    out.message("  --listener=L                Use listener L to action upon exploration:");
+    out.message("                                - dotall: all states/transistions to a DOT file");
+    out.message("                                - dotend: Write end states to a DOT file");
+    out.message("                                > none: Do not listen to changes.");
+    out.message("");
+    out.notify("DMC Model Checker Miscellaneous Options:");
+    out.message("  --storage.stats=on          Enable storage statistics");
+    out.message("  --storage.bars=N            Storage statistics uses N bars. Default 128.");
+    out.message("  --storage.hashmap_scale=N   Sizes of both hashmaps. Default 28.");
+    out.message("  --storage.hashmaproot_scale=N Size of hashmap for root nodes. Default 28.");
+    out.message("  --storage.hashmapdata_scale=N Size of hashmap for data nodes. Default 28.");
+    out.message("  --listener.writestate=on    Enable writing complete states");
+    out.message("  --listener.writesubstate=on Enable writing sub-states, not only root-states");
+    out.message("");
+}
+
+void printVersion(MessageFormatter& out) {
+    printf("llmc %s\n", CompileOptions::LLMC_VERSION);
+    printf("Copyright © 2021 Freark van der Berg\n"
+           "This is free software; see the source for copying conditions.  There is NO\n"
+           "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n");
+}
+
 int main(int argc, char* argv[]) {
 
     Settings& settings = Settings::global();
@@ -306,12 +356,79 @@ int main(int argc, char* argv[]) {
     settings["storage.stats"] = 0;
     settings["storage.bars"] = 128;
 
+    int verbosity = 0;
+    bool doPrintHelp = false;
+    bool doPrintVersion = false;
+
     MessageFormatter out(std::cout);
     out.setAutoFlush(true);
     out.useColoredMessages(true);
-    out.setVerbosity(5);
 
     Shell::messageFormatter = &out;
+
+    // init libfrugi
+    System::init(argc, argv);
+
+    int c = 0;
+    while ((c = getopt(argc, argv, "hm:qs:t:v-:")) != -1) {
+//    while ((c = getopt_long(argc, argv, "i:d:s:t:T:p:-:", long_options, &option_index)) != -1) {
+        switch(c) {
+            case 'h':
+                doPrintHelp = true;
+                break;
+            case 't':
+                if(optarg) {
+                    settings["threads"] = std::stoi(optarg);
+                }
+                break;
+            case 'm':
+                if(optarg) {
+                    settings["mc"] = std::string(optarg);
+                }
+                break;
+            case 'q':
+                verbosity--;
+                break;
+            case 's':
+                if(optarg) {
+                    settings["storage"] = std::string(optarg);
+                }
+                break;
+            case 'v':
+                verbosity++;
+                break;
+            case '-':
+                if(!strcasecmp(optarg, "help")) {
+                    doPrintHelp = true;
+                } else if(!strcasecmp(optarg, "no-color")) {
+                    out.useColoredMessages(false);
+                } else if(!strcasecmp(optarg, "color")) {
+                    out.useColoredMessages(true);
+                } else if(!strcasecmp(optarg, "verbose")) {
+                    int len = strlen(optarg);
+                    if(len > 7 && optarg[7] == '=') {
+                        verbosity = atoi(optarg + 8);
+                    } else {
+                        ++verbosity;
+                    }
+                } else if(!strcasecmp(optarg, "version")) {
+                    doPrintVersion = true;
+                } else {
+                    settings.insertKeyValue(optarg);
+                }
+        }
+    }
+
+    out.setVerbosity(verbosity);
+
+    if(doPrintHelp) {
+        printHelp(out);
+        exit(0);
+    }
+    if(doPrintVersion) {
+        printVersion(out);
+        exit(0);
+    }
 
     // Find binaries
     File bin_llc;
@@ -324,33 +441,6 @@ int main(int argc, char* argv[]) {
         findBinary("clang", out, bin_cc);
     }
     findBinary("dot", out, bin_dot);
-
-    // init libfrugi
-    System::init(argc, argv);
-
-    int c = 0;
-    while ((c = getopt(argc, argv, "m:s:t:-:")) != -1) {
-//    while ((c = getopt_long(argc, argv, "i:d:s:t:T:p:-:", long_options, &option_index)) != -1) {
-        switch(c) {
-            case 't':
-                if(optarg) {
-                    settings["threads"] = std::stoi(optarg);
-                }
-                break;
-            case 'm':
-                if(optarg) {
-                    settings["mc"] = std::string(optarg);
-                }
-                break;
-            case 's':
-                if(optarg) {
-                    settings["storage"] = std::string(optarg);
-                }
-                break;
-            case '-':
-                settings.insertKeyValue(optarg);
-        }
-    }
 
     int htindex = optind;
 
